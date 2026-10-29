@@ -2,7 +2,7 @@
 
 ## 1. Architectural Strengths
 
-Gr8r Studio is a zero-dependency vanilla ES module SPA built with Vite. Every user action or preference mutation invokes `render()` (`src/shell/render.js`), which runs `applyPrefs()` (`src/core/theme.js`) and reconstructs `#app` and `#layer` from template literals.
+MiniPlanner is a zero-dependency vanilla ES module SPA built with Vite. Every user action or preference mutation invokes `render()` (`src/shell/render.js`), which runs `applyPrefs()` (`src/core/theme.js`) and reconstructs `#app` and `#layer` from template literals.
 
 ### Why this architecture is ideal for i18n & RTL:
 

@@ -2,7 +2,7 @@
 
 ## 1. Zero-Dependency i18n Engine (`src/core/i18n.js`)
 
-To preserve Gr8r Studio's fast startup, zero external runtime dependencies, and synchronous `render()` loop, we design a dedicated `src/core/i18n.js` module powered by native `Intl` APIs.
+To preserve MiniPlanner's fast startup, zero external runtime dependencies, and synchronous `render()` loop, we design a dedicated `src/core/i18n.js` module powered by native `Intl` APIs.
 
 ### Locale Registry
 

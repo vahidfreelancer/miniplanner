@@ -3,19 +3,27 @@
    ===================================================================== */
 import { $, uid } from '../core/utils.js';
 import { PCOLORS } from '../core/constants.js';
-import { D, S, mem, team, teamsList } from '../core/store.js';
+import { D, S, isAdmin, mem, team, teamsList } from '../core/store.js';
 import { mutate, toast } from '../ui/toast.js';
 import { go, render } from '../shell/render.js';
 import { openModal } from '../overlays/modals.js';
 import { A, IN, confirmDlg, restore, snapshot } from './actions.js';
 
 A.newTeam = () => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can create teams', { kind: 'err' });
+    return;
+  }
   S.ui.pop = null;
   S.ui.errors = {};
   S.ui.tform = { name: '', desc: '', icon: 'users', color: 'teal', members: [] };
   openModal({ type: 'team' });
 };
 A.editTeam = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can edit teams', { kind: 'err' });
+    return;
+  }
   const t = team(el.dataset.id);
   if (!t) return;
   S.ui.pop = null;
@@ -93,6 +101,10 @@ A.submitTeam = () => {
   }
 };
 A.delTeam = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can delete teams', { kind: 'err' });
+    return;
+  }
   const t = team(el.dataset.id);
   const n = D().members.filter(x => x.team === t.id).length;
   const np = D().projects.filter(p => p.team === t.id).length;

@@ -1,4 +1,4 @@
-# Mini Planner
+# MiniPlanner
 
 > Fork from https://github.com/gr8rstudio/gr8r-studio
 
@@ -6,7 +6,6 @@ A calm, structured project management workspace: home dashboard, inbox, my tasks
 board / list / table / calendar / timeline / files views, members, teams, activity and settings.
 
 Built with plain JavaScript ES modules and CSS, bundled by [Vite](https://vite.dev), with server-side SQLite storage (`better-sqlite3`).
-
 
 ## Getting started
 

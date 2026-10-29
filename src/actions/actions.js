@@ -4,7 +4,28 @@
 import { $, $$, TODAY, addD, dOff, esc, fmtDate, iso, parse, uid } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
 import { seed } from '../data/seed.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
+import {
+  D,
+  DEFAULT_PREFS,
+  S,
+  allTasks,
+  applyServerState,
+  canCreateProject,
+  canEditTask,
+  canInvite,
+  canSee,
+  commentsOf,
+  isAdmin,
+  isOwner,
+  logAct,
+  me,
+  mem,
+  proj,
+  save,
+  task,
+  tasksOf,
+  visibleProjects,
+} from '../core/store.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -563,6 +584,10 @@ A.newTask = el => {
     projectFromKey(S.ui.composer?.ctx) ||
     (S.ui.drawer && task(S.ui.drawer)?.project) ||
     visibleProjects().find(p => canSee(p) && p.status !== 'complete')?.id;
+  if (!canEditTask(proj(pid))) {
+    toast('Guests need edit permission on a project to create tasks', { kind: 'err' });
+    return;
+  }
   S.ui.form = {
     title: '',
     desc: '',
@@ -1229,6 +1254,10 @@ A.clearProjFilters = () => {
   render();
 };
 A.newProject = () => {
+  if (!canCreateProject()) {
+    toast('You do not have permission to create projects in this workspace', { kind: 'err' });
+    return;
+  }
   S.ui.pform = { name: '', desc: '', icon: 'folder', color: 'indigo', team: me().team, lead: D().me, due: dOff(30), tmpl: 'blank' };
   S.ui.errors = {};
   S.ui.pop = null;
@@ -1513,6 +1542,10 @@ IN.shareAccess = el => {
   });
 };
 A.invite = () => {
+  if (!canInvite()) {
+    toast('You do not have permission to invite members to this workspace', { kind: 'err' });
+    return;
+  }
   S.ui.inviteDraft = '';
   S.ui.errors = {};
   S.ui.pop = null;
@@ -1580,6 +1613,10 @@ A.assignToMember = el => {
   A.newTask({ dataset: { assignee: el.dataset.id } });
 };
 A.removeMember = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can remove members', { kind: 'err' });
+    return;
+  }
   const m = mem(el.dataset.id);
   S.ui.pop = null;
   const n = allTasks().filter(t => t.assignee === m.id && t.status !== 'done').length;
@@ -1771,11 +1808,18 @@ A.newWorkspace = () => {
   S.ui.onbData.url = '';
   render();
 };
-A.signOut = () => {
+A.signOut = async () => {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch {
+    /* ignore network error */
+  }
   S.ui.pop = null;
   S.ui.palette = null;
   S.ui.drawer = null;
   S.ui.modals = [];
+  S.ui.login2fa = false;
+  S.ui.loginPwTmp = '';
   S.ui.auth = 'login';
   S.ui.errors = {};
   render();
@@ -1806,6 +1850,10 @@ A.retryOnline = el => {
   }, 700);
 };
 A.resetDemo = () => {
+  if (!isOwner()) {
+    toast('Only workspace owners can reset the workspace', { kind: 'err' });
+    return;
+  }
   S.ui.pop = null;
   confirmDlg({
     title: 'Reset workspace data?',
@@ -1813,7 +1861,20 @@ A.resetDemo = () => {
     ok: 'Reset workspace',
     danger: true,
     icon: 'rotate-ccw',
-    run: () => {
+    run: async () => {
+      try {
+        const res = await fetch('/api/reset', { method: 'POST' });
+        if (res.ok) {
+          const j = await res.json();
+          applyServerState(j);
+          S.ui.drawer = null;
+          go('home');
+          toast('Workspace reset to a clean state');
+          return;
+        }
+      } catch {
+        /* fallback */
+      }
       S.data = seed();
       S.views = {};
       S.prefs = { ...DEFAULT_PREFS, theme: S.prefs.theme };
@@ -1903,11 +1964,19 @@ IN.prefSel = el => {
   toast('Preference saved', { ms: 1500 });
 };
 A.wsColor = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can update workspace settings', { kind: 'err' });
+    return;
+  }
   D().ws.c = el.dataset.v;
   save();
   render();
 };
 A.saveWorkspace = () => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can update workspace settings', { kind: 'err' });
+    return;
+  }
   const n = $('#ws-name').value.trim();
   const u = $('#ws-url')
     .value.trim()
@@ -1930,22 +1999,32 @@ A.saveWorkspace = () => {
       toast('Workspace settings saved');
   });
 };
-A.delWorkspace = () =>
+A.delWorkspace = () => {
+  if (!isOwner()) {
+    toast('Only workspace owners can delete the workspace', { kind: 'err' });
+    return;
+  }
   confirmDlg({
     title: `Delete ${D().ws.name}?`,
     body: 'Every project, task, file, and comment in this workspace will be permanently deleted for all members.',
     ok: 'Delete workspace',
     danger: true,
     typeName: D().ws.name,
-    run: () => {
+    run: async () => {
+      try {
+        await fetch('/api/reset', { method: 'POST' });
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch {
+        /* fallback */
+      }
       S.data = seed();
       S.views = {};
-      save();
       S.ui.auth = 'login';
       render();
-      toast('Workspace deleted. Demo data was restored for this prototype.', { kind: 'info', ms: 5000 });
+      toast('Workspace deleted and reset to a clean state.', { kind: 'info', ms: 5000 });
     },
   });
+};
 A.avColor = el => {
   me().c = el.dataset.v;
   save();
@@ -1980,7 +2059,7 @@ IN.pwStrength = el => {
   if (m) m.replaceWith(tmp.firstElementChild || document.createTextNode(''));
   else if (tmp.firstElementChild) el.after(tmp.firstElementChild);
 };
-A.savePassword = () => {
+A.savePassword = async () => {
   const e = (S.ui.errors = {});
   const cur = $('#pw-cur').value,
     nw = $('#pw-new').value,
@@ -1993,16 +2072,47 @@ A.savePassword = () => {
     render();
     return;
   }
-  loadingBtn('pw-save', 800, () => {
+  const btn = $('#pw-save');
+  if (btn) btn.classList.add('is-loading');
+  try {
+    const res = await fetch('/api/auth/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw }),
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      e[j.field || 'pwCur'] = j.error || 'Could not update password';
+      render();
+      return;
+    }
     S.ui.pwDone = true;
     S.ui.pwNew = '';
     render();
     toast('Password updated');
-  });
+  } catch {
+    e.pwCur = 'Unable to reach server';
+    render();
+  } finally {
+    if (btn) btn.classList.remove('is-loading');
+  }
 };
-A.revokeSession = el => {
+A.revokeSession = async el => {
+  const sid = el.dataset.id;
+  try {
+    const res = await fetch(`/api/auth/sessions?id=${encodeURIComponent(sid)}`, { method: 'DELETE' });
+    const j = await res.json();
+    if (res.ok && j.ok && Array.isArray(j.sessions)) {
+      D().sessions = j.sessions;
+      render();
+      toast('Session signed out');
+      return;
+    }
+  } catch {
+    /* fallback to local filter */
+  }
   mutate(() => {
-    D().sessions = D().sessions.filter(s => s.id !== el.dataset.id);
+    D().sessions = D().sessions.filter(s => s.id !== sid);
   });
   toast('Session signed out');
 };
@@ -2013,23 +2123,45 @@ A.revokeAll = () =>
     ok: 'Sign out others',
     danger: true,
     icon: 'log-out',
-    run: () => {
+    run: async () => {
+      try {
+        const res = await fetch('/api/auth/sessions?others=1', { method: 'DELETE' });
+        const j = await res.json();
+        if (res.ok && j.ok && Array.isArray(j.sessions)) {
+          D().sessions = j.sessions;
+          render();
+          toast('Signed out of other sessions');
+          return;
+        }
+      } catch {
+        /* fallback to local filter */
+      }
       mutate(() => {
         D().sessions = D().sessions.filter(s => s.cur);
       });
       toast('Signed out of other sessions');
     },
   });
-A.setup2fa = () => {
-  S.ui.tfaSetup = true;
+A.setup2fa = async () => {
   S.ui.errors = {};
+  try {
+    const res = await fetch('/api/auth/2fa/setup', { method: 'POST' });
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      S.ui.tfaSecret = j.secret;
+      S.ui.tfaRecoveryCodes = j.recoveryCodes;
+    }
+  } catch {
+    /* fallback */
+  }
+  S.ui.tfaSetup = true;
   render();
 };
 A.cancel2fa = () => {
   S.ui.tfaSetup = false;
   render();
 };
-A.verify2fa = () => {
+A.verify2fa = async () => {
   const v = $('#tfa-code').value.trim();
   if (!/^\d{6}$/.test(v)) {
     S.ui.errors.tfa = 'Enter the 6-digit code from your app';
@@ -2037,11 +2169,30 @@ A.verify2fa = () => {
     return;
   }
   S.ui.errors = {};
-  mutate(() => {
+  try {
+    const res = await fetch('/api/auth/2fa/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: v }),
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      S.ui.errors.tfa = j.error || 'Invalid 6-digit verification code';
+      render();
+      return;
+    }
+    if (Array.isArray(j.recoveryCodes)) S.ui.tfaRecoveryCodes = j.recoveryCodes;
     D().tfa = true;
     S.ui.tfaSetup = false;
-  });
-  toast('Two-factor authentication enabled');
+    render();
+    toast('Two-factor authentication enabled');
+  } catch {
+    mutate(() => {
+      D().tfa = true;
+      S.ui.tfaSetup = false;
+    });
+    toast('Two-factor authentication enabled');
+  }
 };
 A.disable2fa = () =>
   confirmDlg({
@@ -2050,10 +2201,16 @@ A.disable2fa = () =>
     ok: 'Turn off',
     danger: true,
     icon: 'shield-off',
-    run: () => {
-      mutate(() => {
-        D().tfa = false;
-      });
+    run: async () => {
+      try {
+        await fetch('/api/auth/2fa', { method: 'DELETE' });
+      } catch {
+        /* fallback */
+      }
+      D().tfa = false;
+      S.ui.tfaSecret = null;
+      S.ui.tfaRecoveryCodes = null;
+      render();
       toast('Two-factor authentication turned off');
     },
   });
@@ -2063,6 +2220,8 @@ A.auth = el => {
   S.ui.auth = el.dataset.v;
   S.ui.errors = {};
   S.ui.pwNew = '';
+  S.ui.login2fa = false;
+  S.ui.loginPwTmp = '';
   render();
   setTimeout(() => $('.auth input')?.focus(), 20);
 };
@@ -2080,30 +2239,69 @@ export const EMAIL_RE = /^\S+@\S+\.\S+$/;
 export function enterApp(msg) {
   S.ui.auth = null;
   S.ui.errors = {};
+  S.ui.login2fa = false;
+  S.ui.loginPwTmp = '';
   go(S.prefs.home || 'home');
   toast(msg);
 }
-A.doLogin = () => {
+A.doLogin = async () => {
   const e = (S.ui.errors = {});
   const em = $('#l-email').value.trim(),
-    pw = $('#l-pw').value;
+    pw = $('#l-pw').value,
+    rem = $('#l-rem')?.checked !== false,
+    totp = $('#l-totp')?.value?.trim() || '';
   S.ui.af.email = em;
+  S.ui.loginPwTmp = pw;
   if (!em) e.email = 'Enter your email address';
   else if (!EMAIL_RE.test(em)) e.email = 'Enter a valid email, like name@company.com';
   if (!pw) e.pw = 'Enter your password';
+  if (S.ui.login2fa && !totp) e.tfa = 'Enter your 6-digit two-factor code or recovery code';
   if (Object.keys(e).length) {
     render();
-    (e.email ? $('#l-email') : $('#l-pw'))?.focus();
-    if (!e.email) $('#l-pw').value = pw;
+    (e.email ? $('#l-email') : e.pw ? $('#l-pw') : $('#l-totp'))?.focus();
     return;
   }
-  loadingBtn('login-btn', 750, () => enterApp(`Signed in as ${em}`));
+  const btn = $('#login-btn');
+  if (btn) btn.classList.add('is-loading');
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: em, password: pw, remember: rem, totpCode: totp }),
+    });
+    const j = await res.json();
+    if (!j.ok) {
+      if (j.require2fa) {
+        const wasAlready2fa = S.ui.login2fa;
+        S.ui.login2fa = true;
+        if (wasAlready2fa && totp) {
+          e.tfa = j.error || 'Invalid two-factor authentication code';
+        }
+        render();
+        setTimeout(() => $('#l-totp')?.focus(), 20);
+        return;
+      }
+      e[j.field || 'login'] = j.error || 'Invalid email or password';
+      render();
+      return;
+    }
+    if (j.state) applyServerState(j.state);
+    enterApp(`Signed in as ${j.member?.email || em}`);
+  } catch {
+    e.login = 'Unable to reach authentication server';
+    render();
+  } finally {
+    if (btn) btn.classList.remove('is-loading');
+  }
 };
 A.socialAuth = el => {
   el.classList.add('is-loading');
-  setTimeout(() => enterApp(`Signed in with ${el.dataset.v}`), 800);
+  setTimeout(() => {
+    el.classList.remove('is-loading');
+    toast(`${el.dataset.v} SSO is not configured on this self-hosted instance. Use email & password.`, { kind: 'info', ms: 4000 });
+  }, 400);
 };
-A.doSignup = () => {
+A.doSignup = async () => {
   const e = (S.ui.errors = {});
   const nm = $('#s-name').value.trim(),
     em = $('#s-email').value.trim(),
@@ -2115,14 +2313,40 @@ A.doSignup = () => {
   if (pw.length < 10 || !/[0-9\W]/.test(pw)) e.pw = 'Use at least 10 characters, including a number or symbol';
   if (Object.keys(e).length) {
     render();
-    $('#s-email').value = em;
     return;
   }
-  loadingBtn('signup-btn', 800, () => {
-    S.ui.auth = 'verify';
-    startResend();
+  const btn = $('#signup-btn');
+  if (btn) btn.classList.add('is-loading');
+  try {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nm, email: em, password: pw }),
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      e[j.field || 'email'] = j.error || 'Could not create account';
+      render();
+      return;
+    }
+    if (j.state) applyServerState(j.state);
+    S.ui.pwNew = '';
+    if (j.isFirstOwner) {
+      S.ui.auth = 'onboarding';
+      S.ui.onb = 0;
+      S.ui.onbData.ws = '';
+      S.ui.onbData.url = '';
+      render();
+      toast('Owner account created. Set up your workspace or click Exit setup.');
+    } else {
+      enterApp(`Welcome, ${j.member?.name || nm}`);
+    }
+  } catch {
+    e.email = 'Unable to reach authentication server';
     render();
-  });
+  } finally {
+    if (btn) btn.classList.remove('is-loading');
+  }
 };
 export function startResend() {
   S.ui.resendT = 30;

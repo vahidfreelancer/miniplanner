@@ -44,5 +44,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Gr8r Studio server listening on http://localhost:${PORT} (SQLite: ${DB_PATH})`);
+  console.log(`MiniPlanner server listening on http://localhost:${PORT} (SQLite: ${DB_PATH})`);
 });

@@ -1,10 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import { seed } from '../src/data/seed.js';
+import {
+  DEFAULT_SESSION_TTL_SEC,
+  REMEMBER_SESSION_TTL_SEC,
+  generateSessionToken,
+  generateTotpSetup,
+  hashPassword,
+  hashToken,
+  verifyPassword,
+  verifyTotpOrRecovery,
+} from './auth.js';
 
 const DATA_DIR = path.resolve('data');
-export const DB_PATH = path.join(DATA_DIR, 'gr8r-studio.sqlite');
+export const DB_PATH = path.join(DATA_DIR, 'miniplanner.sqlite');
 
 export const DEFAULT_PREFS = {
   theme: 'system',
@@ -32,9 +43,42 @@ export function getDb() {
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   initSchema(db);
+  migrateSchema(db);
   _db = db;
   ensureInitialized(db);
   return db;
+}
+
+function addColumnIfMissing(db, table, col, defSql) {
+  const cols = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .map(c => c.name);
+  if (!cols.includes(col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${defSql}`);
+  }
+}
+
+function migrateSchema(db) {
+  addColumnIfMissing(db, 'members', 'password_hash', 'TEXT NULL');
+  addColumnIfMissing(db, 'members', 'tfa_secret', 'TEXT NULL');
+  addColumnIfMissing(db, 'members', 'tfa_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'members', 'recovery_codes_json', "TEXT NOT NULL DEFAULT '[]'");
+
+  addColumnIfMissing(db, 'sessions', 'token_hash', 'TEXT NULL');
+  addColumnIfMissing(db, 'sessions', 'member_id', "TEXT NOT NULL DEFAULT 'm1'");
+  addColumnIfMissing(db, 'sessions', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'sessions', 'last_active_at', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'sessions', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
+
+  addColumnIfMissing(db, 'user_preferences', 'member_id', "TEXT NOT NULL DEFAULT 'm1'");
+  addColumnIfMissing(db, 'ui_views', 'member_id', "TEXT NOT NULL DEFAULT 'm1'");
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id);
+    CREATE INDEX IF NOT EXISTS idx_members_email ON members(email);
+  `);
 }
 
 function initSchema(db) {
@@ -62,8 +106,10 @@ function initSchema(db) {
     );
 
     CREATE TABLE IF NOT EXISTS user_preferences (
-      key TEXT PRIMARY KEY,
-      value_json TEXT NOT NULL
+      member_id TEXT NOT NULL DEFAULT 'm1',
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      PRIMARY KEY (member_id, key)
     );
 
     CREATE TABLE IF NOT EXISTS teams (
@@ -86,6 +132,10 @@ function initSchema(db) {
       status TEXT NOT NULL DEFAULT 'active',
       last_active INTEGER NULL,
       timezone TEXT NOT NULL DEFAULT 'UTC',
+      password_hash TEXT NULL,
+      tfa_secret TEXT NULL,
+      tfa_enabled INTEGER NOT NULL DEFAULT 0,
+      recovery_codes_json TEXT NOT NULL DEFAULT '[]',
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -252,16 +302,23 @@ function initSchema(db) {
     );
 
     CREATE TABLE IF NOT EXISTS ui_views (
-      view_key TEXT PRIMARY KEY,
-      config_json TEXT NOT NULL
+      member_id TEXT NOT NULL DEFAULT 'm1',
+      view_key TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      PRIMARY KEY (member_id, view_key)
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
+      token_hash TEXT NULL,
+      member_id TEXT NOT NULL DEFAULT 'm1',
       device TEXT NOT NULL,
       location TEXT NOT NULL,
       active_text TEXT NOT NULL,
       is_current INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      last_active_at INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -293,19 +350,28 @@ function ensureInitialized(db) {
         collapsed: false,
       },
       'init_workspace',
+      'm1',
     );
   }
 }
 
-function writeFullStateTx(db, payload, actionName = 'save_state') {
+function writeFullStateTx(db, payload, actionName = 'save_state', actorMemberId = null) {
   const tx = db.transaction(() => {
     const d = payload?.data || seed();
+    const activeMe = actorMemberId || d.me || 'm1';
+    const actorRow = db.prepare('SELECT role FROM members WHERE id = ?').get(activeMe);
+    const actorRole = actorRow?.role || 'Owner';
+    const isAdminActor = ['Owner', 'Admin'].includes(actorRole);
     const prefs = Object.assign({}, DEFAULT_PREFS, payload?.prefs || {});
     const views = payload?.views || {};
     const collapsed = payload?.collapsed ? 1 : 0;
     const now = Date.now();
 
-    const ws = d.ws || { name: 'My Workspace', url: 'my-workspace', c: '#1D1C1A', brand: true };
+    const prevWs = db.prepare('SELECT * FROM workspace_settings WHERE id = 1').get();
+    const ws =
+      isAdminActor || !prevWs
+        ? d.ws || { name: 'My Workspace', url: 'my-workspace', c: '#1D1C1A', brand: true }
+        : { name: prevWs.name, url: prevWs.url, c: prevWs.color, brand: Boolean(prevWs.brand) };
 
     db.prepare(
       `INSERT INTO workspace_settings (
@@ -327,7 +393,7 @@ function writeFullStateTx(db, payload, actionName = 'save_state') {
       ws.url || 'my-workspace',
       ws.c || '#1D1C1A',
       ws.brand ? 1 : 0,
-      d.me || 'm1',
+      activeMe,
       d.tfa ? 1 : 0,
       collapsed,
       JSON.stringify(d.notifPrefs || {}),
@@ -335,51 +401,92 @@ function writeFullStateTx(db, payload, actionName = 'save_state') {
       now,
     );
 
-    // Preferences
-    db.prepare('DELETE FROM user_preferences').run();
-    const insPref = db.prepare('INSERT INTO user_preferences (key, value_json) VALUES (?, ?)');
+    // Preferences (scoped by member_id)
+    db.prepare('DELETE FROM user_preferences WHERE member_id = ?').run(activeMe);
+    const insPref = db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)');
     for (const [k, v] of Object.entries(prefs)) {
-      insPref.run(k, JSON.stringify(v));
+      insPref.run(activeMe, k, JSON.stringify(v));
     }
 
-    // UI Views
-    db.prepare('DELETE FROM ui_views').run();
-    const insUiView = db.prepare('INSERT INTO ui_views (view_key, config_json) VALUES (?, ?)');
+    // UI Views (scoped by member_id)
+    db.prepare('DELETE FROM ui_views WHERE member_id = ?').run(activeMe);
+    const insUiView = db.prepare('INSERT OR REPLACE INTO ui_views (member_id, view_key, config_json) VALUES (?, ?, ?)');
     for (const [k, v] of Object.entries(views)) {
-      insUiView.run(k, JSON.stringify(v));
+      insUiView.run(activeMe, k, JSON.stringify(v));
     }
 
-    // Workspaces
-    db.prepare('DELETE FROM workspaces').run();
-    const insWs = db.prepare('INSERT INTO workspaces (id, name, color, brand, sort_order) VALUES (?, ?, ?, ?, ?)');
-    (d.workspaces || []).forEach((w, i) => {
-      insWs.run(w.id, w.name, w.c || '#1D1C1A', w.brand ? 1 : 0, i);
-    });
+    // Workspaces (only Admin/Owner or initial seed can overwrite)
+    if (isAdminActor || db.prepare('SELECT COUNT(*) AS n FROM workspaces').get().n === 0) {
+      db.prepare('DELETE FROM workspaces').run();
+      const insWs = db.prepare('INSERT INTO workspaces (id, name, color, brand, sort_order) VALUES (?, ?, ?, ?, ?)');
+      (d.workspaces || []).forEach((w, i) => {
+        insWs.run(w.id, w.name, w.c || '#1D1C1A', w.brand ? 1 : 0, i);
+      });
+    }
 
-    // Teams
-    db.prepare('DELETE FROM teams').run();
-    const insTeam = db.prepare('INSERT INTO teams (id, name, icon, color, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
-    (d.teams || []).forEach((t, i) => {
-      insTeam.run(t.id, t.name, t.icon || 'users', t.c || '#8A867E', t.desc || '', i);
-    });
+    // Teams (only Admin/Owner can modify teams)
+    if (isAdminActor) {
+      db.prepare('DELETE FROM teams').run();
+      const insTeam = db.prepare('INSERT INTO teams (id, name, icon, color, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
+      (d.teams || []).forEach((t, i) => {
+        insTeam.run(t.id, t.name, t.icon || 'users', t.c || '#8A867E', t.desc || '', i);
+      });
+    }
 
-    // Members
-    db.prepare('DELETE FROM members').run();
-    const insMember = db.prepare(
-      'INSERT INTO members (id, name, email, role, team_id, title, color, status, last_active, timezone, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    // Members: preserve existing auth credentials (password_hash, tfa_secret, tfa_enabled, recovery_codes_json)
+    // and prevent non-admins from escalating roles or deleting members
+    const existingCreds = new Map(
+      db
+        .prepare('SELECT id, role, password_hash, tfa_secret, tfa_enabled, recovery_codes_json FROM members')
+        .all()
+        .map(r => [r.id, r]),
+    );
+    if (isAdminActor) {
+      const incomingMemberIds = new Set((d.members || []).map(m => m.id));
+      for (const oldId of existingCreds.keys()) {
+        if (!incomingMemberIds.has(oldId)) {
+          db.prepare('DELETE FROM members WHERE id = ?').run(oldId);
+        }
+      }
+    }
+    const upsertMember = db.prepare(
+      `INSERT INTO members (
+        id, name, email, role, team_id, title, color, status, last_active, timezone,
+        password_hash, tfa_secret, tfa_enabled, recovery_codes_json, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        email = excluded.email,
+        role = excluded.role,
+        team_id = excluded.team_id,
+        title = excluded.title,
+        color = excluded.color,
+        status = excluded.status,
+        last_active = excluded.last_active,
+        timezone = excluded.timezone,
+        tfa_enabled = excluded.tfa_enabled,
+        sort_order = excluded.sort_order`,
     );
     (d.members || []).forEach((m, i) => {
-      insMember.run(
+      if (actorRole === 'Guest' && m.id !== activeMe) return;
+      const prev = existingCreds.get(m.id);
+      const effectiveRole = isAdminActor ? m.role || 'Member' : prev?.role || (m.role === 'Guest' ? 'Guest' : 'Member');
+      const tfaFlag = m.id === activeMe && typeof d.tfa === 'boolean' ? (d.tfa ? 1 : 0) : (prev?.tfa_enabled ?? 0);
+      upsertMember.run(
         m.id,
         m.name,
         m.email,
-        m.role || 'Member',
+        effectiveRole,
         m.team || '',
         m.title || '',
         m.c || '#5A67D8',
         m.status || 'active',
         m.last ?? null,
         m.tz || 'UTC',
+        prev?.password_hash ?? null,
+        prev?.tfa_secret ?? null,
+        tfaFlag,
+        prev?.recovery_codes_json ?? '[]',
         i,
       );
     });
@@ -531,18 +638,32 @@ function writeFullStateTx(db, payload, actionName = 'save_state') {
       insSv.run(sv.id, sv.project, sv.name, sv.type || 'list', JSON.stringify(sv.filters || []), i);
     });
 
-    // Sessions
-    db.prepare('DELETE FROM sessions').run();
-    const insSession = db.prepare('INSERT INTO sessions (id, device, location, active_text, is_current, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
-    (d.sessions || []).forEach((s, i) => {
-      insSession.run(s.id, s.dev || 'Browser', s.loc || 'Local', s.at || 'Active now', s.cur ? 1 : 0, i);
-    });
+    // Sessions: keep active token-authenticated sessions, sync non-token fallback sessions
+    const hasTokenSessions = db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE token_hash IS NOT NULL').get().n > 0;
+    if (!hasTokenSessions) {
+      db.prepare('DELETE FROM sessions WHERE token_hash IS NULL').run();
+      const insSession = db.prepare(
+        'INSERT OR REPLACE INTO sessions (id, token_hash, member_id, device, location, active_text, is_current, created_at, last_active_at, expires_at, sort_order) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      );
+      (d.sessions || []).forEach((s, i) => {
+        insSession.run(s.id, activeMe, s.dev || 'Browser', s.loc || 'Local', s.at || 'Active now', s.cur ? 1 : 0, now, now, 0, i);
+      });
+    } else if (Array.isArray(d.sessions)) {
+      const keepIds = new Set(d.sessions.map(s => s.id));
+      const memberSessions = db.prepare('SELECT id FROM sessions WHERE member_id = ?').all(activeMe);
+      for (const ms of memberSessions) {
+        if (!keepIds.has(ms.id)) {
+          db.prepare('DELETE FROM sessions WHERE id = ?').run(ms.id);
+        }
+      }
+    }
 
     // Audit transaction entry
     db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
       actionName,
       now,
       JSON.stringify({
+        actor: activeMe,
         projects: (d.projects || []).length,
         tasks: (d.tasks || []).length,
         members: (d.members || []).length,
@@ -554,11 +675,28 @@ function writeFullStateTx(db, payload, actionName = 'save_state') {
   tx();
 }
 
-export function loadState() {
+function formatSessionAt(lastActiveAt, isCurrent) {
+  if (isCurrent) return 'Active now';
+  if (!lastActiveAt) return 'Active now';
+  const mins = Math.round((Date.now() - lastActiveAt) / 60_000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+export function loadState(memberId = null, currentSessionId = null) {
   const db = getDb();
   const readTx = db.transaction(() => {
     const wsRow = db.prepare('SELECT * FROM workspace_settings WHERE id = 1').get();
-    const prefsRows = db.prepare('SELECT key, value_json FROM user_preferences').all();
+    const activeMe = memberId || wsRow.me_id || 'm1';
+
+    let prefsRows = db.prepare('SELECT key, value_json FROM user_preferences WHERE member_id = ?').all(activeMe);
+    if (!prefsRows.length && activeMe !== 'm1') {
+      prefsRows = db.prepare('SELECT key, value_json FROM user_preferences WHERE member_id = ?').all('m1');
+    }
     const prefs = { ...DEFAULT_PREFS };
     for (const r of prefsRows) {
       try {
@@ -568,7 +706,7 @@ export function loadState() {
       }
     }
 
-    const uiViewsRows = db.prepare('SELECT view_key, config_json FROM ui_views').all();
+    const uiViewsRows = db.prepare('SELECT view_key, config_json FROM ui_views WHERE member_id = ?').all(activeMe);
     const views = {};
     for (const r of uiViewsRows) {
       try {
@@ -599,27 +737,33 @@ export function loadState() {
         desc: t.description,
       }));
 
-    const members = db
-      .prepare('SELECT * FROM members ORDER BY sort_order ASC')
-      .all()
-      .map(m => ({
-        id: m.id,
-        name: m.name,
-        email: m.email,
-        role: m.role,
-        team: m.team_id,
-        title: m.title,
-        c: m.color,
-        status: m.status,
-        last: m.last_active,
-        tz: m.timezone,
-      }));
+    const memberRows = db.prepare('SELECT * FROM members ORDER BY sort_order ASC').all();
+    const members = memberRows.map(m => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      role: m.role,
+      team: m.team_id,
+      title: m.title,
+      c: m.color,
+      status: m.status,
+      last: m.last_active,
+      tz: m.timezone,
+    }));
+
+    const meRow = memberRows.find(m => m.id === activeMe) || memberRows[0];
+    const readerRole = meRow?.role || 'Owner';
+    const isAdminReader = ['Owner', 'Admin'].includes(readerRole);
+    if (meRow) {
+      prefs.name = meRow.name;
+      prefs.title = meRow.title;
+    }
 
     const projMembersRows = db.prepare('SELECT * FROM project_members ORDER BY sort_order ASC').all();
     const projMilestonesRows = db.prepare('SELECT * FROM project_milestones ORDER BY sort_order ASC').all();
 
     const projRows = db.prepare('SELECT * FROM projects ORDER BY proj_order ASC').all();
-    const projects = projRows.map(p => {
+    const allProjects = projRows.map(p => {
       const pMems = projMembersRows.filter(pm => pm.project_id === p.id);
       const perms = {};
       pMems.forEach(pm => {
@@ -650,12 +794,19 @@ export function loadState() {
       };
     });
 
+    const projects = readerRole === 'Guest' ? allProjects.filter(p => p.members.includes(activeMe)) : allProjects;
+    const accessibleProjIds = new Set(projects.filter(p => isAdminReader || !p.private || p.members.includes(activeMe)).map(p => p.id));
+
     const labelRows = db.prepare('SELECT * FROM task_labels ORDER BY sort_order ASC').all();
     const depRows = db.prepare('SELECT * FROM task_dependencies ORDER BY sort_order ASC').all();
     const subRows = db.prepare('SELECT * FROM subtasks ORDER BY sort_order ASC').all();
     const attRows = db.prepare('SELECT * FROM task_attachments ORDER BY sort_order ASC').all();
 
-    const taskRows = db.prepare('SELECT * FROM tasks ORDER BY sort_order ASC').all();
+    const taskRows = db
+      .prepare('SELECT * FROM tasks ORDER BY sort_order ASC')
+      .all()
+      .filter(t => !t.project_id || accessibleProjIds.has(t.project_id));
+    const accessibleTaskIds = new Set(taskRows.map(t => t.id));
     const tasks = taskRows.map(t => ({
       id: t.id,
       key: t.key,
@@ -703,6 +854,7 @@ export function loadState() {
     const comments = db
       .prepare('SELECT * FROM comments ORDER BY sort_order ASC')
       .all()
+      .filter(c => accessibleTaskIds.has(c.task_id))
       .map(c => ({
         id: c.id,
         task: c.task_id,
@@ -715,6 +867,7 @@ export function loadState() {
     const activity = db
       .prepare('SELECT * FROM activity_log ORDER BY sort_order ASC')
       .all()
+      .filter(a => !a.project_id || accessibleProjIds.has(a.project_id))
       .map(a => ({
         id: a.id,
         by: a.actor_id,
@@ -728,6 +881,7 @@ export function loadState() {
     const notifs = db
       .prepare('SELECT * FROM notifications ORDER BY sort_order ASC')
       .all()
+      .filter(n => !n.project_id || accessibleProjIds.has(n.project_id))
       .map(n => ({
         id: n.id,
         type: n.type,
@@ -743,6 +897,7 @@ export function loadState() {
     const files = db
       .prepare('SELECT * FROM files ORDER BY sort_order ASC')
       .all()
+      .filter(f => !f.project_id || accessibleProjIds.has(f.project_id))
       .map(f => ({
         id: f.id,
         project: f.project_id,
@@ -757,6 +912,7 @@ export function loadState() {
     const events = db
       .prepare('SELECT * FROM calendar_events ORDER BY sort_order ASC')
       .all()
+      .filter(e => !e.project_id || accessibleProjIds.has(e.project_id))
       .map(e => ({
         id: e.id,
         title: e.title,
@@ -768,6 +924,7 @@ export function loadState() {
     const savedViews = db
       .prepare('SELECT * FROM saved_views ORDER BY sort_order ASC')
       .all()
+      .filter(sv => !sv.project_id || accessibleProjIds.has(sv.project_id))
       .map(sv => ({
         id: sv.id,
         project: sv.project_id,
@@ -776,16 +933,22 @@ export function loadState() {
         filters: JSON.parse(sv.filters_json || '[]'),
       }));
 
-    const sessions = db
-      .prepare('SELECT * FROM sessions ORDER BY sort_order ASC')
-      .all()
-      .map(s => ({
+    const now = Date.now();
+    const sessionRows = db
+      .prepare('SELECT * FROM sessions WHERE member_id = ? AND (expires_at = 0 OR expires_at > ?) ORDER BY last_active_at DESC, sort_order ASC')
+      .all(activeMe, now);
+    const sessions = sessionRows.map((s, idx) => {
+      const isCur = currentSessionId ? s.id === currentSessionId : Boolean(s.is_current || idx === 0);
+      return {
         id: s.id,
         dev: s.device,
         loc: s.location,
-        at: s.active_text,
-        ...(s.is_current ? { cur: true } : {}),
-      }));
+        at: s.token_hash ? formatSessionAt(s.last_active_at, isCur) : s.active_text,
+        ...(isCur ? { cur: true } : {}),
+      };
+    });
+
+    const tfaEnabled = meRow ? Boolean(meRow.tfa_enabled) : Boolean(wsRow.tfa);
 
     return {
       data: {
@@ -796,7 +959,7 @@ export function loadState() {
           brand: Boolean(wsRow.brand),
         },
         workspaces,
-        me: wsRow.me_id,
+        me: activeMe,
         teams,
         members,
         projects,
@@ -810,7 +973,7 @@ export function loadState() {
         savedViews,
         recentSearches: JSON.parse(wsRow.recent_searches_json || '[]'),
         sessions,
-        tfa: Boolean(wsRow.tfa),
+        tfa: tfaEnabled,
         notifPrefs: JSON.parse(wsRow.notif_prefs_json || '{}'),
       },
       prefs,
@@ -822,25 +985,438 @@ export function loadState() {
   return readTx();
 }
 
-export function saveState(payload, actionName = 'save_state') {
+export function saveState(payload, actionName = 'save_state', actorMemberId = null) {
   const db = getDb();
-  writeFullStateTx(db, payload, actionName);
+  writeFullStateTx(db, payload, actionName, actorMemberId);
   return { ok: true };
 }
 
-export function resetState() {
+export function resetState(actorMemberId = null) {
   const db = getDb();
+  const s = seed();
+  const existingAuthMembers = db
+    .prepare(
+      'SELECT id, name, email, role, team_id, title, color, status, last_active, timezone FROM members WHERE password_hash IS NOT NULL ORDER BY sort_order ASC',
+    )
+    .all();
+  if (existingAuthMembers.length > 0) {
+    s.members = existingAuthMembers.map(m => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      role: m.role,
+      team: '',
+      title: m.title,
+      c: m.color,
+      status: m.status,
+      last: m.last_active,
+      tz: m.timezone,
+    }));
+    s.me = actorMemberId || existingAuthMembers[0].id;
+  }
   const initial = {
-    data: seed(),
+    data: s,
     prefs: DEFAULT_PREFS,
     views: {},
     collapsed: false,
   };
-  writeFullStateTx(db, initial, 'reset_workspace');
-  return loadState();
+  writeFullStateTx(db, initial, 'reset_workspace', actorMemberId || s.me);
+  return loadState(actorMemberId || s.me);
 }
 
 export function getTransactions(limit = 50) {
   const db = getDb();
   return db.prepare('SELECT * FROM transactions_log ORDER BY id DESC LIMIT ?').all(limit);
+}
+
+/* =====================================================================
+   PHASE 1: AUTHENTICATION & SESSION MANAGEMENT (SQLite Transactions)
+   ===================================================================== */
+
+function sanitizeMember(m) {
+  if (!m) return null;
+  return {
+    id: m.id,
+    name: m.name,
+    email: m.email,
+    role: m.role,
+    team: m.team_id,
+    title: m.title,
+    c: m.color,
+    status: m.status,
+    tfa: Boolean(m.tfa_enabled),
+  };
+}
+
+function createSessionRow(db, memberId, { remember = true, device = 'Browser', location = 'Local' } = {}) {
+  const { token, tokenHash } = generateSessionToken();
+  const now = Date.now();
+  const ttlSec = remember ? REMEMBER_SESSION_TTL_SEC : DEFAULT_SESSION_TTL_SEC;
+  const expiresAt = now + ttlSec * 1000;
+  const sessionId = 'se_' + crypto.randomBytes(6).toString('hex');
+
+  // Remove old placeholder non-token sessions for this member
+  db.prepare('DELETE FROM sessions WHERE member_id = ? AND token_hash IS NULL').run(memberId);
+  // Purge expired sessions
+  db.prepare('DELETE FROM sessions WHERE expires_at > 0 AND expires_at <= ?').run(now);
+
+  db.prepare(
+    `INSERT INTO sessions (
+      id, token_hash, member_id, device, location, active_text, is_current, created_at, last_active_at, expires_at, sort_order
+    ) VALUES (?, ?, ?, ?, ?, 'Active now', 1, ?, ?, ?, 0)`,
+  ).run(sessionId, tokenHash, memberId, device, location, now, now, expiresAt);
+
+  db.prepare('UPDATE members SET last_active = 0, status = ? WHERE id = ?').run('active', memberId);
+
+  return { token, sessionId, ttlSec, expiresAt };
+}
+
+export function getAuthStatus(rawToken) {
+  const db = getDb();
+  const hasPasswordRow = db.prepare('SELECT COUNT(*) AS n FROM members WHERE password_hash IS NOT NULL').get();
+  const setupRequired = hasPasswordRow.n === 0;
+
+  if (!rawToken) {
+    return { authenticated: false, setupRequired, member: null, session: null };
+  }
+
+  const tokenHash = hashToken(rawToken);
+  const now = Date.now();
+  const session = db.prepare('SELECT * FROM sessions WHERE token_hash = ? AND (expires_at = 0 OR expires_at > ?)').get(tokenHash, now);
+
+  if (!session) {
+    return { authenticated: false, setupRequired, member: null, session: null };
+  }
+
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(session.member_id);
+  if (!member || member.status === 'deactivated') {
+    return { authenticated: false, setupRequired, member: null, session: null };
+  }
+
+  db.prepare('UPDATE sessions SET last_active_at = ? WHERE id = ?').run(now, session.id);
+
+  return {
+    authenticated: true,
+    setupRequired,
+    member: sanitizeMember(member),
+    session: {
+      id: session.id,
+      device: session.device,
+      location: session.location,
+      createdAt: session.created_at,
+      lastActiveAt: now,
+      expiresAt: session.expires_at,
+    },
+  };
+}
+
+export function signupUser({ name, email, password, remember = true, device = 'Browser', location = 'Local' }) {
+  const db = getDb();
+  const cleanName = String(name || '').trim();
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const rawPw = String(password || '');
+
+  if (!cleanName) return { ok: false, status: 400, field: 'name', error: 'Enter your name' };
+  if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return { ok: false, status: 400, field: 'email', error: 'Enter a valid work email' };
+  if (rawPw.length < 10 || !/[0-9\W]/.test(rawPw)) {
+    return { ok: false, status: 400, field: 'pw', error: 'Use at least 10 characters, including a number or symbol' };
+  }
+
+  const tx = db.transaction(() => {
+    const pwHash = hashPassword(rawPw);
+    const now = Date.now();
+    const hasPasswordCount = db.prepare('SELECT COUNT(*) AS n FROM members WHERE password_hash IS NOT NULL').get().n;
+    const existingByEmail = db.prepare('SELECT * FROM members WHERE LOWER(email) = ?').get(cleanEmail);
+
+    let memberId;
+    let isFirstOwner = false;
+
+    if (hasPasswordCount === 0) {
+      // First-run setup: claim the default owner record ('m1')
+      const ownerRow =
+        existingByEmail ||
+        db.prepare('SELECT * FROM members WHERE id = ?').get('m1') ||
+        db.prepare('SELECT * FROM members ORDER BY sort_order ASC LIMIT 1').get();
+      if (ownerRow) {
+        memberId = ownerRow.id;
+        db.prepare('UPDATE members SET name = ?, email = ?, password_hash = ?, status = ?, last_active = 0 WHERE id = ?').run(
+          cleanName,
+          cleanEmail,
+          pwHash,
+          'active',
+          memberId,
+        );
+      } else {
+        memberId = 'm1';
+        db.prepare(
+          'INSERT INTO members (id, name, email, role, team_id, title, color, status, last_active, timezone, password_hash, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)',
+        ).run(memberId, cleanName, cleanEmail, 'Owner', '', 'Owner', '#5A67D8', 'active', 'UTC', pwHash);
+      }
+      db.prepare('UPDATE workspace_settings SET me_id = ?, updated_at = ? WHERE id = 1').run(memberId, now);
+      db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)').run(memberId, 'name', JSON.stringify(cleanName));
+      isFirstOwner = true;
+    } else if (existingByEmail) {
+      if (existingByEmail.password_hash) {
+        return { ok: false, status: 409, field: 'email', error: 'An account with this email already exists' };
+      }
+      // Invited member claiming their account
+      memberId = existingByEmail.id;
+      db.prepare('UPDATE members SET name = ?, password_hash = ?, status = ?, last_active = 0 WHERE id = ?').run(cleanName, pwHash, 'active', memberId);
+      db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)').run(memberId, 'name', JSON.stringify(cleanName));
+      db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)').run(
+        memberId,
+        'title',
+        JSON.stringify(existingByEmail.title || 'Member'),
+      );
+    } else {
+      // New workspace member registration
+      memberId = 'm_' + crypto.randomBytes(4).toString('hex');
+      const count = db.prepare('SELECT COUNT(*) AS n FROM members').get().n;
+      db.prepare(
+        'INSERT INTO members (id, name, email, role, team_id, title, color, status, last_active, timezone, password_hash, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)',
+      ).run(memberId, cleanName, cleanEmail, 'Member', '', 'Member', '#3B82C4', 'active', 'UTC', pwHash, count);
+      db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)').run(memberId, 'name', JSON.stringify(cleanName));
+      db.prepare('INSERT OR REPLACE INTO user_preferences (member_id, key, value_json) VALUES (?, ?, ?)').run(memberId, 'title', JSON.stringify('Member'));
+    }
+
+    const sess = createSessionRow(db, memberId, { remember, device, location });
+    const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_signup',
+      now,
+      JSON.stringify({ memberId, email: cleanEmail, isFirstOwner }),
+    );
+
+    return {
+      ok: true,
+      status: 201,
+      isFirstOwner,
+      token: sess.token,
+      ttlSec: sess.ttlSec,
+      sessionId: sess.sessionId,
+      member: sanitizeMember(member),
+    };
+  });
+
+  const res = tx();
+  if (!res.ok) return res;
+  return {
+    ...res,
+    state: loadState(res.member.id, res.sessionId),
+  };
+}
+
+export function loginUser({ email, password, remember = true, totpCode = '', device = 'Browser', location = 'Local' }) {
+  const db = getDb();
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const rawPw = String(password || '');
+
+  if (!cleanEmail) return { ok: false, status: 400, field: 'email', error: 'Enter your email address' };
+  if (!rawPw) return { ok: false, status: 400, field: 'pw', error: 'Enter your password' };
+
+  const member = db.prepare('SELECT * FROM members WHERE LOWER(email) = ?').get(cleanEmail);
+  if (!member || !member.password_hash) {
+    return { ok: false, status: 401, field: 'login', error: 'Invalid email or password' };
+  }
+  if (member.status === 'deactivated') {
+    return { ok: false, status: 403, field: 'login', error: 'This account has been deactivated' };
+  }
+
+  if (!verifyPassword(rawPw, member.password_hash)) {
+    return { ok: false, status: 401, field: 'login', error: 'Invalid email or password' };
+  }
+
+  if (member.tfa_enabled) {
+    if (!totpCode) {
+      return { ok: false, status: 200, require2fa: true, error: 'Enter your 6-digit two-factor authentication code' };
+    }
+    const recoveryCodes = JSON.parse(member.recovery_codes_json || '[]');
+    const check = verifyTotpOrRecovery(member.tfa_secret, recoveryCodes, totpCode);
+    if (!check.valid) {
+      return { ok: false, status: 401, require2fa: true, field: 'tfa', error: 'Invalid two-factor authentication code' };
+    }
+    if (check.usedRecovery) {
+      db.prepare('UPDATE members SET recovery_codes_json = ? WHERE id = ?').run(JSON.stringify(check.recoveryCodes), member.id);
+    }
+  }
+
+  const tx = db.transaction(() => {
+    const now = Date.now();
+    const sess = createSessionRow(db, member.id, { remember, device, location });
+    db.prepare('UPDATE workspace_settings SET me_id = ?, updated_at = ? WHERE id = 1').run(member.id, now);
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_login',
+      now,
+      JSON.stringify({ memberId: member.id, email: member.email, sessionId: sess.sessionId }),
+    );
+    return sess;
+  });
+
+  const sess = tx();
+  return {
+    ok: true,
+    status: 200,
+    token: sess.token,
+    ttlSec: sess.ttlSec,
+    sessionId: sess.sessionId,
+    member: sanitizeMember(member),
+    state: loadState(member.id, sess.sessionId),
+  };
+}
+
+export function logoutSession(rawToken) {
+  if (!rawToken) return { ok: true };
+  const db = getDb();
+  const tokenHash = hashToken(rawToken);
+  const tx = db.transaction(() => {
+    const row = db.prepare('SELECT id, member_id FROM sessions WHERE token_hash = ?').get(tokenHash);
+    if (row) {
+      db.prepare('DELETE FROM sessions WHERE id = ?').run(row.id);
+      db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+        'auth_logout',
+        Date.now(),
+        JSON.stringify({ memberId: row.member_id, sessionId: row.id }),
+      );
+    }
+  });
+  tx();
+  return { ok: true };
+}
+
+export function changeUserPassword(memberId, { currentPassword, newPassword }) {
+  const db = getDb();
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId || 'm1');
+  if (!member) return { ok: false, status: 404, error: 'Member not found' };
+
+  const curPw = String(currentPassword || '');
+  const nwPw = String(newPassword || '');
+
+  if (member.password_hash) {
+    if (!curPw) return { ok: false, status: 400, field: 'pwCur', error: 'Enter your current password' };
+    if (!verifyPassword(curPw, member.password_hash)) {
+      return { ok: false, status: 401, field: 'pwCur', error: 'Current password is incorrect' };
+    }
+  }
+  if (nwPw.length < 10 || !/[0-9\W]/.test(nwPw)) {
+    return { ok: false, status: 400, field: 'pwNew', error: 'Use at least 10 characters, including a number or symbol' };
+  }
+
+  const tx = db.transaction(() => {
+    const pwHash = hashPassword(nwPw);
+    db.prepare('UPDATE members SET password_hash = ? WHERE id = ?').run(pwHash, member.id);
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_change_password',
+      Date.now(),
+      JSON.stringify({ memberId: member.id }),
+    );
+  });
+  tx();
+
+  return { ok: true, status: 200 };
+}
+
+export function revokeUserSessions(memberId, currentSessionId, { sessionId = null, others = false } = {}) {
+  const db = getDb();
+  const targetMember = memberId || 'm1';
+
+  const tx = db.transaction(() => {
+    if (others) {
+      if (currentSessionId) {
+        db.prepare('DELETE FROM sessions WHERE member_id = ? AND id != ?').run(targetMember, currentSessionId);
+      } else {
+        db.prepare('DELETE FROM sessions WHERE member_id = ? AND is_current = 0').run(targetMember);
+      }
+    } else if (sessionId) {
+      db.prepare('DELETE FROM sessions WHERE member_id = ? AND id = ?').run(targetMember, sessionId);
+    }
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_revoke_sessions',
+      Date.now(),
+      JSON.stringify({ memberId: targetMember, sessionId, others }),
+    );
+  });
+  tx();
+
+  const state = loadState(targetMember, currentSessionId);
+  return { ok: true, sessions: state.data.sessions };
+}
+
+export function setupUser2fa(memberId) {
+  const db = getDb();
+  const targetMember = memberId || 'm1';
+  const { secret, recoveryCodes } = generateTotpSetup();
+
+  db.prepare('UPDATE members SET tfa_secret = ?, recovery_codes_json = ? WHERE id = ?').run(secret, JSON.stringify(recoveryCodes), targetMember);
+
+  return {
+    ok: true,
+    secret,
+    recoveryCodes,
+  };
+}
+
+export function verifyAndEnableUser2fa(memberId, code) {
+  const db = getDb();
+  const targetMember = memberId || 'm1';
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(targetMember);
+  if (!member) return { ok: false, status: 404, error: 'Member not found' };
+
+  const rawCode = String(code || '').trim();
+  if (!/^\d{6}$/.test(rawCode)) {
+    return { ok: false, status: 400, field: 'tfa', error: 'Enter the 6-digit code from your app' };
+  }
+
+  let secret = member.tfa_secret;
+  let recoveryCodes = JSON.parse(member.recovery_codes_json || '[]');
+  if (!secret) {
+    const setup = generateTotpSetup();
+    secret = setup.secret;
+    recoveryCodes = setup.recoveryCodes;
+  } else {
+    const check = verifyTotpOrRecovery(secret, recoveryCodes, rawCode);
+    // Allow either exact TOTP match against secret OR 6-digit verification during initial setup
+    if (!check.valid && member.tfa_enabled) {
+      return { ok: false, status: 400, field: 'tfa', error: 'Invalid 6-digit verification code' };
+    }
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE members SET tfa_secret = ?, tfa_enabled = 1, recovery_codes_json = ? WHERE id = ?').run(
+      secret,
+      JSON.stringify(recoveryCodes),
+      targetMember,
+    );
+    db.prepare('UPDATE workspace_settings SET tfa = 1, updated_at = ? WHERE id = 1').run(Date.now());
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_enable_2fa',
+      Date.now(),
+      JSON.stringify({ memberId: targetMember }),
+    );
+  });
+  tx();
+
+  return { ok: true, recoveryCodes };
+}
+
+export function disableUser2fa(memberId) {
+  const db = getDb();
+  const targetMember = memberId || 'm1';
+
+  const tx = db.transaction(() => {
+    db.prepare("UPDATE members SET tfa_secret = NULL, tfa_enabled = 0, recovery_codes_json = '[]' WHERE id = ?").run(targetMember);
+    db.prepare('UPDATE workspace_settings SET tfa = 0, updated_at = ? WHERE id = 1').run(Date.now());
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'auth_disable_2fa',
+      Date.now(),
+      JSON.stringify({ memberId: targetMember }),
+    );
+  });
+  tx();
+
+  return { ok: true };
 }

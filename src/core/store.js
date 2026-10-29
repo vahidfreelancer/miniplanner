@@ -3,7 +3,7 @@ import { TODAY, diffD, iso, parse, uid } from './utils.js';
 import { PCOLORS, TEAMS_SEED } from './constants.js';
 import { seed } from '../data/seed.js';
 
-export const STORE_KEY = 'gr8r.v2';
+export const STORE_KEY = 'miniplanner.v2';
 export const DEFAULT_PREFS = {
   theme: 'system',
   accent: 'indigo',
@@ -87,13 +87,35 @@ export const S = {
     drafts: {},
   },
 };
+export function applyServerState(j) {
+  if (!j || !j.data) return;
+  S.data = j.data || seed();
+  S.prefs = Object.assign({}, DEFAULT_PREFS, j.prefs || {});
+  S.views = j.views || {};
+  S.ui.collapsed = !!j.collapsed;
+}
 export async function hydrate() {
+  try {
+    const authRes = await fetch('/api/auth/me', { headers: { Accept: 'application/json' } });
+    if (authRes.ok) {
+      const auth = await authRes.json();
+      if (auth.setupRequired) {
+        const j = await load();
+        if (j) applyServerState(j);
+        S.ui.auth = 'signup';
+        return;
+      }
+      if (!auth.authenticated) {
+        S.ui.auth = 'login';
+        return;
+      }
+    }
+  } catch {
+    /* server unreachable: continue to local fallback */
+  }
   const j = await load();
   if (j) {
-    S.data = j.data || seed();
-    S.prefs = Object.assign({}, DEFAULT_PREFS, j.prefs || {});
-    S.views = j.views || {};
-    S.ui.collapsed = !!j.collapsed;
+    applyServerState(j);
   }
 }
 export let _saveT;
@@ -141,7 +163,12 @@ export const visibleProjects = () =>
     .projOrder.map(proj)
     .filter(Boolean)
     .filter(p => !p.archived);
-export const canSee = p => Boolean(p && (!p.private || p.members.includes(D().me)));
+export const isOwner = () => me().role === 'Owner';
+export const isAdmin = () => ['Owner', 'Admin'].includes(me().role);
+export const canCreateProject = () => isAdmin() || (me().role === 'Member' && S.prefs.permCreate !== false);
+export const canInvite = () => isAdmin() || (me().role === 'Member' && S.prefs.permGuests !== false);
+export const canEditTask = (p = null) => me().role !== 'Guest' || Boolean(p && p.perms?.[D().me] === 'edit');
+export const canSee = p => Boolean(p && (isAdmin() || (me().role === 'Guest' ? p.members.includes(D().me) : !p.private || p.members.includes(D().me))));
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.due && t.status !== 'done' && diffD(parse(t.due), TODAY) < 0;
