@@ -2,7 +2,7 @@
 import { MOD, clamp, esc } from '../core/utils.js';
 import { LOGO, ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, allTasks, pColor, proj, save, task } from '../core/store.js';
+import { D, S, allTasks, pColor, proj, save, task, visibleProjects } from '../core/store.js';
 import { FT, av, hl, stIcon } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { go, render } from '../shell/render.js';
@@ -66,7 +66,7 @@ export function paletteItems() {
       name: 'Switch workspace',
       items: D()
         .workspaces.filter(w => !q || w.name.toLowerCase().includes(ql))
-        .map(w => ({ html: `${wsLogo(w, 20)}`, name: w.name, sub: w.plan + ' plan', run: () => A.switchWs({ dataset: { v: w.id } }) })),
+        .map(w => ({ html: `${wsLogo(w, 20)}`, name: w.name, run: () => A.switchWs({ dataset: { v: w.id } }) })),
     });
     return groups;
   }
@@ -109,20 +109,18 @@ export function paletteItems() {
         },
       })),
     });
+    const sug = [
+      { icon: 'clock-alert', name: 'Overdue tasks', run: () => A.goTasks({ dataset: { f: 'overdue' } }) },
+      { icon: 'user', name: 'Tasks assigned to me', run: () => go('mytasks') },
+      { icon: 'folder-plus', name: 'Create a new project', run: () => A.newProject() },
+    ];
+    const firstProj = visibleProjects()[0];
+    if (firstProj) {
+      sug.push({ icon: 'paperclip', name: `Files in ${firstProj.name}`, run: () => go('project', { id: firstProj.id, tab: 'files' }) });
+    }
     groups.push({
       name: 'Suggested',
-      items: [
-        { icon: 'clock-alert', name: 'Overdue tasks', run: () => A.goTasks({ dataset: { f: 'overdue' } }) },
-        { icon: 'user', name: 'Tasks assigned to me', run: () => go('mytasks') },
-        {
-          icon: 'signal-high',
-          name: 'High priority in Website Redesign',
-          run: () => {
-            go('project', { id: 'p1', tab: 'v:v1' });
-          },
-        },
-        { icon: 'paperclip', name: 'Files in Website Redesign', run: () => go('project', { id: 'p1', tab: 'files' }) },
-      ],
+      items: sug,
     });
     return groups;
   }
@@ -132,7 +130,7 @@ export function paletteItems() {
       name: 'Tasks',
       items: r.tasks
         .slice(0, lim)
-        .map(t => ({ html: stIcon(t.status), name: t.title, sub: proj(t.project).name, r: t.key, run: () => A.openTask({ dataset: { id: t.id } }) })),
+        .map(t => ({ html: stIcon(t.status), name: t.title, sub: proj(t.project)?.name || '', r: t.key, run: () => A.openTask({ dataset: { id: t.id } }) })),
     });
   if (sc === 'all' || sc === 'projects')
     groups.push({

@@ -16,38 +16,43 @@ export const DEFAULT_PREFS = {
   motion: 'system',
   home: 'home',
   openTasks: 'drawer',
-  name: 'Tanjim Islam',
-  title: 'Head of Product',
+  name: 'Workspace Owner',
+  title: 'Owner',
 };
-export function load() {
+export async function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      if (j && j.data && j.data.tasks) return j;
+    localStorage.removeItem(STORE_KEY);
+  } catch {
+    /* ignore storage restrictions */
+  }
+  try {
+    const res = await fetch('/api/state', { headers: { Accept: 'application/json' } });
+    if (res.ok) {
+      const j = await res.json();
+      if (j && j.data && Array.isArray(j.data.tasks)) return j;
     }
   } catch {
-    /* storage blocked or corrupt: start from seed data */
+    /* server unreachable: fall back to clean initial state */
   }
   return null;
 }
-export const saved = load();
+export const saved = null;
 export const S = {
-  data: saved?.data || seed(),
-  prefs: Object.assign({}, DEFAULT_PREFS, saved?.prefs || {}),
-  views: saved?.views || {},
+  data: seed(),
+  prefs: Object.assign({}, DEFAULT_PREFS),
+  views: {},
   ui: {
     fx: {},
     auth: null,
     authStep: 'login',
     onb: 0,
-    onbData: { use: 'product', team: 'kanban', size: '2-10', ws: '', proj: 'Website Launch', tmpl: 'web', invites: '' },
+    onbData: { use: 'product', team: 'kanban', size: '2-10', ws: '', proj: '', tmpl: 'blank', invites: '' },
     route: 'home',
     params: {},
     history: [],
-    collapsed: !!saved?.collapsed,
+    collapsed: false,
     mnav: false,
-    expanded: { p1: true },
+    expanded: {},
     drawer: null,
     drawerFull: false,
     drawerTab: 'comments',
@@ -82,21 +87,51 @@ export const S = {
     drafts: {},
   },
 };
+export async function hydrate() {
+  const j = await load();
+  if (j) {
+    S.data = j.data || seed();
+    S.prefs = Object.assign({}, DEFAULT_PREFS, j.prefs || {});
+    S.views = j.views || {};
+    S.ui.collapsed = !!j.collapsed;
+  }
+}
 export let _saveT;
-export function save() {
+export function save(action = 'save_state') {
   clearTimeout(_saveT);
   _saveT = setTimeout(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ data: S.data, prefs: S.prefs, views: S.views, collapsed: S.ui.collapsed }));
-    } catch {
-      /* storage full or blocked: keep working in memory */
-    }
+    fetch('/api/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        data: S.data,
+        prefs: S.prefs,
+        views: S.views,
+        collapsed: S.ui.collapsed,
+      }),
+    }).catch(() => {
+      /* keep working in memory if request fails */
+    });
   }, 150);
 }
 
 /* ---------- lookups ---------- */
 export const D = () => S.data;
-export const me = () => D().members.find(m => m.id === D().me);
+export const me = () =>
+  D().members.find(m => m.id === D().me) ||
+  D().members[0] || {
+    id: 'm1',
+    name: S.prefs?.name || 'Workspace Owner',
+    email: 'owner@workspace.local',
+    role: 'Owner',
+    team: '',
+    title: S.prefs?.title || 'Owner',
+    c: '#5A67D8',
+    status: 'active',
+    last: 0,
+    tz: 'UTC',
+  };
 export const mem = id => D().members.find(m => m.id === id);
 export const proj = id => D().projects.find(p => p.id === id);
 export const task = id => D().tasks.find(t => t.id === id);
@@ -106,7 +141,7 @@ export const visibleProjects = () =>
     .projOrder.map(proj)
     .filter(Boolean)
     .filter(p => !p.archived);
-export const canSee = p => !p.private || p.members.includes(D().me);
+export const canSee = p => Boolean(p && (!p.private || p.members.includes(D().me)));
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.due && t.status !== 'done' && diffD(parse(t.due), TODAY) < 0;

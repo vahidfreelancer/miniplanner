@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { icons as lucide } from 'lucide';
+import { apiMiddleware } from './server/api.js';
+import { getDb } from './server/db.js';
 
 /* `virtual:icons` exports only the Lucide icons the source actually names, as inline SVG markup,
    so the bundle carries ~170 icons instead of the full set. Any quoted kebab-case token in src/
@@ -47,7 +49,21 @@ function lucideSubset() {
   };
 }
 
+function sqliteBackendPlugin() {
+  return {
+    name: 'sqlite-backend',
+    configureServer(server) {
+      getDb();
+      server.middlewares.use(apiMiddleware());
+    },
+    configurePreviewServer(server) {
+      getDb();
+      server.middlewares.use(apiMiddleware());
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [lucideSubset()],
+  plugins: [lucideSubset(), sqliteBackendPlugin()],
   server: { port: 5173 },
 });

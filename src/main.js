@@ -54,11 +54,12 @@ import './features/archive.js';
 import './actions/teams.js';
 import './actions/subtasks.js';
 import './actions/archive.js';
-import { S, D } from './core/store.js';
+import { S, D, hydrate } from './core/store.js';
 import { A } from './actions/actions.js';
 import { ROUTE_NAMES, render, go } from './shell/render.js';
 
-(function init() {
+(async function init() {
+  await hydrate();
   document.documentElement.lang = 'en';
   if (!document.getElementById('sr-live')) {
     const l = document.createElement('div');

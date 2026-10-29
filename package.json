@@ -1,12 +1,13 @@
 {
-  "name": "gr8r-studio",
+  "name": "miniplanner",
   "version": "1.0.0",
   "private": true,
-  "description": "Gr8r Studio: a calm, structured project management workspace.",
+  "description": "miniplanner Studio: a calm, structured project management workspace.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "start": "node server/index.js",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -22,5 +23,8 @@
     "lucide": "^0.460.0",
     "prettier": "^3.9.9",
     "vite": "^6.4.4"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3"
   }
 }

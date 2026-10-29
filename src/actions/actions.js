@@ -26,7 +26,21 @@ export function nextKey(p) {
   return p.key + '-' + p.seq;
 }
 export function createTask(f) {
-  const p = proj(f.project) || visibleProjects().find(canSee);
+  let p = proj(f.project) || visibleProjects().find(canSee);
+  if (!p) {
+    p = createProject(
+      {
+        name: 'General',
+        icon: 'folder',
+        color: 'indigo',
+        team: me()?.team || '',
+        lead: D().me,
+        due: dOff(30),
+        desc: 'General workspace tasks.',
+      },
+      'blank',
+    );
+  }
   const maxO = Math.max(0, ...D().tasks.map(t => t.order));
   const t = Object.assign(
     {
@@ -462,7 +476,7 @@ A.copyLink = el => {
           : d.id && proj(d.id)
             ? `project/${proj(d.id).key.toLowerCase()}`
             : '';
-  copy(`https://gr8rstudio.com/${D().ws.url}/${path}`);
+  copy(`https://cbfsd.net/${D().ws.url}/${path}`);
 };
 A.copyText = el => copy(el.dataset.text, 'Copied to clipboard');
 A.copyEmail = el => {
@@ -552,7 +566,7 @@ A.newTask = el => {
   S.ui.form = {
     title: '',
     desc: '',
-    project: canSee(proj(pid)) ? pid : 'p1',
+    project: canSee(proj(pid)) ? pid : visibleProjects().find(canSee)?.id || '',
     status: 'todo',
     assignee: d.assignee || D().me,
     priority: 'medium',
@@ -687,7 +701,7 @@ A.commitComposer = () => {
     return;
   }
   const f = { title: v, ...c.gb };
-  f.project = f.project || projectFromKey(c.ctx) || curProjectId() || 'p1';
+  f.project = f.project || projectFromKey(c.ctx) || curProjectId() || visibleProjects().find(canSee)?.id || '';
   if (c.ctx === 'mytasks') f.assignee = D().me;
   mutate(() => createTask(f));
   setTimeout(() => $('#composer-in')?.focus(), 0);
@@ -1171,8 +1185,12 @@ A.colArchive = () => {
 };
 A.colSortPrio = el => {
   const ts = colTasks(S.ui.pop.key, el.dataset.id).sort((a, b) => PR[b.priority].w - PR[a.priority].w);
-  const base = Math.min(...ts.map(t => t.order));
   S.ui.pop = null;
+  if (!ts.length) {
+    render();
+    return;
+  }
+  const base = Math.min(...ts.map(t => t.order));
   mutate(() => ts.forEach((t, i) => (t.order = base + i * 0.001)));
 };
 
@@ -1550,7 +1568,7 @@ A.submitInvite = () => {
     toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
   });
 };
-A.copyInviteLink = () => copy(`https://gr8rstudio.com/join/${D().ws.url}-7f3k2`, 'Invite link copied');
+A.copyInviteLink = () => copy(`https://cbfsd.net/join/${D().ws.url}-7f3k2`, 'Invite link copied');
 A.resendInvite = el => {
   S.ui.pop = null;
   render();
@@ -1790,9 +1808,9 @@ A.retryOnline = el => {
 A.resetDemo = () => {
   S.ui.pop = null;
   confirmDlg({
-    title: 'Reset demo data?',
-    body: 'All projects, tasks, and settings in this browser go back to the original sample workspace.',
-    ok: 'Reset data',
+    title: 'Reset workspace data?',
+    body: 'All projects, tasks, and settings in the database will be cleared back to a fresh empty workspace.',
+    ok: 'Reset workspace',
     danger: true,
     icon: 'rotate-ccw',
     run: () => {
@@ -1800,9 +1818,9 @@ A.resetDemo = () => {
       S.views = {};
       S.prefs = { ...DEFAULT_PREFS, theme: S.prefs.theme };
       S.ui.drawer = null;
-      save();
+      save('reset_workspace');
       go('home');
-      toast('Demo data restored');
+      toast('Workspace reset to a clean state');
     },
   });
 };
@@ -2039,22 +2057,6 @@ A.disable2fa = () =>
       toast('Two-factor authentication turned off');
     },
   });
-A.changePlan = el => {
-  const v = el.dataset.v;
-  const price = { Free: 0, Team: 12, Business: 24 }[v];
-  confirmDlg({
-    title: `${v === 'Free' ? 'Downgrade' : 'Upgrade'} to ${v}?`,
-    body: `${D().members.length} members × $${price}/month = <b>$${D().members.length * price}/month</b>, prorated from today and billed to Visa ending 4242.`,
-    ok: v === 'Free' ? 'Downgrade' : `Upgrade to ${v}`,
-    icon: 'gem',
-    run: () => {
-      mutate(() => {
-        D().plan = v;
-      });
-      toast(`You're now on the ${v} plan`);
-    },
-  });
-};
 
 /* auth */
 A.auth = el => {
@@ -2254,7 +2256,7 @@ A.onbFinish = () => {
     if (o.ws.trim()) {
       const c = ['#2F2E2A', '#5A67D8', '#23918A', '#C54B78'][D().workspaces.length % 4];
       D().ws = { name: o.ws.trim(), url: o.url || 'workspace', c };
-      if (!D().workspaces.some(w => w.name === D().ws.name)) D().workspaces.push({ id: uid('w'), name: D().ws.name, c, plan: 'Free' });
+      if (!D().workspaces.some(w => w.name === D().ws.name)) D().workspaces.push({ id: uid('w'), name: D().ws.name, c });
     }
     S.prefs.defaultTab = { kanban: 'board', list: 'list', timeline: 'timeline', table: 'table' }[o.team] || 'board';
     const tm = TEMPLATES.find(t => t.id === o.tmpl) || TEMPLATES[2];

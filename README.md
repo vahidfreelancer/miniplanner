@@ -1,12 +1,12 @@
-# Gr8r Studio
+# Mini Planner
+
+> Fork from https://github.com/gr8rstudio/gr8r-studio
 
 A calm, structured project management workspace: home dashboard, inbox, my tasks, projects with
 board / list / table / calendar / timeline / files views, members, teams, activity and settings.
 
-Built with plain JavaScript ES modules and CSS, bundled by [Vite](https://vite.dev). There is no
-UI framework and no runtime dependency.
+Built with plain JavaScript ES modules and CSS, bundled by [Vite](https://vite.dev), with server-side SQLite storage (`better-sqlite3`).
 
-![Gr8r Studio home dashboard](docs/preview.png)
 
 ## Getting started
 
@@ -14,9 +14,10 @@ Requires Node.js 18 or newer (`.nvmrc` pins 22).
 
 ```bash
 npm install
-npm run dev       # http://localhost:5173 with hot reload
+npm run dev       # http://localhost:5173 with hot reload + SQLite API
 npm run build     # production build in dist/
-npm run preview   # serve the production build locally
+npm start         # serve production build + SQLite API
+npm run preview   # serve the production build locally via Vite
 npm run lint      # ESLint
 npm run format    # Prettier
 ```
@@ -30,6 +31,7 @@ vite.config.js          Vite config, including the Lucide icon-subset plugin
 eslint.config.js        lint rules (ESLint flat config); formatting by Prettier (.prettierrc.json)
 .github/workflows/      CI: lint, format check, build
 docs/preview.png        README screenshot
+server/                 SQLite database schema, transactions, API middleware, and server
 src/
   main.js               entry: imports styles and modules, then boots the app
   styles/
@@ -39,7 +41,7 @@ src/
     views/              list, board, table, calendar, timeline, projects & files
     pages/              settings, auth & onboarding
   core/                 utilities, constants, icons, store (state + lookups), theme
-  data/seed.js          demo workspace data
+  data/seed.js          clean initial workspace state
   ui/                   shared render helpers, toasts, the select dropdown
   shell/                render loop and router, sidebar/topbar layout, skeletons, view engine
   components/           task list renderer
