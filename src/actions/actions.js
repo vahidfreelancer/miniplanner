@@ -50,6 +50,10 @@ export function nextKey(p) {
 export function createTask(f) {
   let p = proj(f.project) || visibleProjects().find(canSee);
   if (!p) {
+    if (!canCreateProject()) {
+      toast('You must be assigned to a project before creating tasks', { kind: 'err' });
+      return null;
+    }
     p = createProject(
       {
         name: 'General',
@@ -329,6 +333,12 @@ A.popPick = el => {
   }
   if (p.type === 'pstatus') {
     const pr = proj(p.id);
+    if (!canEditTask(pr)) {
+      S.ui.pop = null;
+      render();
+      toast('You do not have permission to change the status of this project', { kind: 'err' });
+      return;
+    }
     mutate(() => {
       pr.status = v;
       D().activity.unshift({
@@ -599,9 +609,14 @@ A.newTask = el => {
     curProjectId() ||
     projectFromKey(S.ui.composer?.ctx) ||
     (S.ui.drawer && task(S.ui.drawer)?.project) ||
-    visibleProjects().find(p => canSee(p) && p.status !== 'complete')?.id;
+    visibleProjects().find(p => canSee(p) && p.status !== 'complete')?.id ||
+    visibleProjects().find(canSee)?.id;
+  if (!pid && !canCreateProject()) {
+    toast('You are not assigned to any projects yet. Ask an administrator to add you to a project.', { kind: 'err' });
+    return;
+  }
   if (!canEditTask(proj(pid))) {
-    toast('Guests need edit permission on a project to create tasks', { kind: 'err' });
+    toast('You need edit permission on this project to create tasks', { kind: 'err' });
     return;
   }
   S.ui.form = {
@@ -703,8 +718,9 @@ A.submitTask = () => {
   if (
     !mutate(() => {
       t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '', attachments: files });
-      files.forEach(x => D().files.unshift({ ...x, project: t.project, task: t.id }));
-    })
+      if (t) files.forEach(x => D().files.unshift({ ...x, project: t.project, task: t.id }));
+    }) ||
+    !t
   )
     return;
   if (f.more) {

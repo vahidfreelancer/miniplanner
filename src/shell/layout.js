@@ -81,8 +81,8 @@ export function renderSidebar() {
   const unreadInbox = d.notifs.filter(n => !n.read && n.type !== 'update').length;
   const unreadAll = d.notifs.filter(n => !n.read).length;
   const myOpen = allTasks().filter(t => t.assignee === d.me && t.status !== 'done' && t.due && diffD(parse(t.due), TODAY) <= 0).length;
-  const projs = visibleProjects().filter(p => p.status !== 'complete');
   const inProj = u.route === 'project' ? u.params.id : null;
+  const projs = visibleProjects().filter(p => p.status !== 'complete' || p.id === inProj);
   return `<nav class="side" aria-label="Main">
     <div class="side-top">
       <div class="row" style="gap:2px">
@@ -123,7 +123,7 @@ export function renderSidebar() {
               <span class="trunc">${esc(p.name)}</span>
               ${p.fav ? `<span class="fav">${ic('star', 11)}</span>` : ''}
               ${p.private ? `<span class="faint" style="margin-left:4px">${ic('lock', 11)}</span>` : ''}
-              <span class="sdot" style="background:${PSTAT[p.status].c}" title="${PSTAT[p.status].name}"></span>
+              <span class="sdot" style="background:${(PSTAT[p.status] || PSTAT.planning).c}" title="${(PSTAT[p.status] || PSTAT.planning).name}"></span>
               <span class="hov"><span class="ibtn ibtn-xs" data-a="ctxBtn" data-ctx="project" data-id="${p.id}" aria-label="Project options">${ic('ellipsis', 14)}</span><span class="ibtn ibtn-xs" data-a="toggleExpand" data-id="${p.id}" aria-label="Expand">${ic('chevron-right', 13, 'chev ' + (open ? 'open' : ''))}</span></span>
             </div>
             <div class="sub ${open && !u.collapsed ? 'open' : ''}">

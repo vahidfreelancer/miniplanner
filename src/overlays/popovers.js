@@ -164,7 +164,7 @@ export function popHtml(p) {
     case 'project':
       inner = popList(
         visibleProjects()
-          .filter(q => canSee(q) && q.status !== 'complete')
+          .filter(q => canSee(q) && (q.status !== 'complete' || t?.project === q.id))
           .map(q => ({ id: q.id, name: q.name, html: `<span class="pdot" style="--c:${pColor(q)}"></span>`, on: t?.project === q.id })),
         { search: 'Move to project…' },
       );

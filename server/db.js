@@ -444,16 +444,16 @@ function writeFullStateTx(db, payload, actionName = 'save_state', actorMemberId 
     const activeMe = actorMemberId || d.me || 'm1';
     const scope = opts.forceAdmin
       ? {
-        memberId: activeMe,
-        role: 'Owner',
-        isAdmin: true,
-        projectIds: new Set(),
-        projectRole: new Map(),
-        projectMemberMap: new Map(),
-        coMemberIds: new Set([activeMe]),
-        visibleMemberIds: new Set([activeMe]),
-        adminIds: new Set([activeMe]),
-      }
+          memberId: activeMe,
+          role: 'Owner',
+          isAdmin: true,
+          projectIds: new Set(),
+          projectRole: new Map(),
+          projectMemberMap: new Map(),
+          coMemberIds: new Set([activeMe]),
+          visibleMemberIds: new Set([activeMe]),
+          adminIds: new Set([activeMe]),
+        }
       : getScope(db, activeMe);
     const isAdminActor = scope.isAdmin;
     const prefs = Object.assign({}, DEFAULT_PREFS, payload?.prefs || {});
@@ -1262,15 +1262,15 @@ export function loadState(memberId = null, currentSessionId = null) {
     // Teams are hidden completely for non-admins
     const teams = isAdminReader
       ? db
-        .prepare('SELECT * FROM teams ORDER BY sort_order ASC')
-        .all()
-        .map(t => ({
-          id: t.id,
-          name: t.name,
-          icon: t.icon,
-          c: t.color,
-          desc: t.description,
-        }))
+          .prepare('SELECT * FROM teams ORDER BY sort_order ASC')
+          .all()
+          .map(t => ({
+            id: t.id,
+            name: t.name,
+            icon: t.icon,
+            c: t.color,
+            desc: t.description,
+          }))
       : [];
 
     const memberRows = db.prepare('SELECT * FROM members ORDER BY sort_order ASC').all();
@@ -1302,16 +1302,16 @@ export function loadState(memberId = null, currentSessionId = null) {
         const milestones = projMilestonesRows.filter(ms => ms.project_id === p.id).map(ms => ({ name: ms.name, date: ms.date }));
         const teamHistory = isAdminReader
           ? projTeamHistRows
-            .filter(th => th.project_id === p.id)
-            .map(th => ({
-              id: th.id,
-              fromTeam: th.from_team_id,
-              fromName: th.from_team_name,
-              toTeam: th.to_team_id,
-              toName: th.to_team_name,
-              by: th.changed_by,
-              at: th.changed_at,
-            }))
+              .filter(th => th.project_id === p.id)
+              .map(th => ({
+                id: th.id,
+                fromTeam: th.from_team_id,
+                fromName: th.from_team_name,
+                toTeam: th.to_team_id,
+                toName: th.to_team_name,
+                by: th.changed_by,
+                at: th.changed_at,
+              }))
           : [];
         return {
           id: p.id,
@@ -2340,328 +2340,12 @@ export function createProjectResource(actorMemberId, body = {}) {
   const pid = body.id || 'p_' + crypto.randomBytes(4).toString('hex');
   const key = String(
     body.key ||
-    name
-      .replace(/[^A-Za-z]/g, '')
-      .slice(0, 4)
-      .toUpperCase() ||
-    'PRJ',
+      name
+        .replace(/[^A-Za-z]/g, '')
+        .slice(0, 4)
+        .toUpperCase() ||
+      'PRJ',
   )
-    .trim()
-    .toUpperCase();
-  const leadId = body.lead || actorMemberId;
-  const members = Array.isArray(body.members) ? [...new Set([leadId, ...body.members])] : [leadId];
-
-  const tx = db.transaction(() => {
-    const count = db.prepare('SELECT COUNT(*) AS n FROM projects').get().n;
-    db.prepare(
-      `INSERT INTO projects (
-        id, key, name, icon, color, status, team_id, lead_id, due_date, start_date,
-        fav, is_private, access, description, last_activity, seq, archived, archived_at, proj_order
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'private', ?, 0, 200, 0, NULL, ?)`,
-    ).run(
-      pid,
-      key,
-      name,
-      body.icon || 'folder',
-      body.color || 'indigo',
-      body.status || 'planning',
-      body.team || '',
-      leadId,
-      body.due || null,
-      body.start || null,
-      body.fav ? 1 : 0,
-      body.desc || '',
-      count,
-    );
-    const insMem = db.prepare('INSERT OR REPLACE INTO project_members (project_id, member_id, permission, sort_order) VALUES (?, ?, ?, ?)');
-    members.forEach((mid, i) => {
-      insMem.run(pid, mid, normalizeProjectPermission(body.perms?.[mid], mid === leadId), i);
-    });
-    db.prepare('INSERT INTO activity_log (id, actor_id, verb, task_id, project_id, created_at, extra, sort_order) VALUES (?, ?, ?, NULL, ?, ?, ?, 0)').run(
-      'a_' + crypto.randomBytes(4).toString('hex'),
-      actorMemberId,
-      'created project',
-      pid,
-      now,
-      name,
-    );
-    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
-      'create_project',
-      now,
-      JSON.stringify({ actor: actorMemberId, projectId: pid, name }),
-    );
-  });
-  tx();
-  const created = getProjectResource(actorMemberId, pid);
-  return { ...created, status: 201 };
-}
-
-export function patchProjectResource(actorMemberId, projectId, body = {}) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  if (!canReadProject(scope, projectId)) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  if (!canWriteProject(scope, projectId, 'edit')) {
-    return { ok: false, status: 403, error: 'You do not have edit access to this project' };
-  }
-  const prev = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
-  if (!prev) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  const now = Date.now();
-  const tx = db.transaction(() => {
-    db.prepare(
-      `UPDATE projects SET
-        name = ?, icon = ?, color = ?, status = ?, due_date = ?, start_date = ?,
-        fav = ?, description = ?, team_id = ?, lead_id = ?
-       WHERE id = ?`,
-    ).run(
-      body.name !== undefined ? String(body.name).trim() || prev.name : prev.name,
-      body.icon || prev.icon,
-      body.color || prev.color,
-      body.status || prev.status,
-      body.due !== undefined ? body.due || null : prev.due_date,
-      body.start !== undefined ? body.start || null : prev.start_date,
-      body.fav !== undefined ? (body.fav ? 1 : 0) : prev.fav,
-      body.desc !== undefined ? body.desc : prev.description,
-      scope.isAdmin && body.team !== undefined ? body.team || '' : prev.team_id,
-      scope.isAdmin && body.lead !== undefined ? body.lead || null : prev.lead_id,
-      projectId,
-    );
-    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
-      'patch_project',
-      now,
-      JSON.stringify({ actor: actorMemberId, projectId }),
-    );
-  });
-  tx();
-  return getProjectResource(actorMemberId, projectId);
-}
-
-export function deleteProjectResource(actorMemberId, projectId) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  if (!canReadProject(scope, projectId)) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  if (!scope.isAdmin) {
-    return { ok: false, status: 403, error: 'Only workspace owners and admins can delete projects' };
-  }
-  const prev = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
-  if (!prev) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
-    db.prepare('DELETE FROM files WHERE project_id = ?').run(projectId);
-    db.prepare('DELETE FROM calendar_events WHERE project_id = ?').run(projectId);
-    db.prepare('DELETE FROM saved_views WHERE project_id = ?').run(projectId);
-    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
-      'delete_project',
-      Date.now(),
-      JSON.stringify({ actor: actorMemberId, projectId, name: prev.name }),
-    );
-  });
-  tx();
-  return { ok: true, status: 200, deletedId: projectId };
-}
-
-export function createTaskResource(actorMemberId, body = {}) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  const projectId = body.project || body.projectId;
-  if (!projectId || !canReadProject(scope, projectId)) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  if (!canWriteProject(scope, projectId, 'edit')) {
-    return { ok: false, status: 403, error: 'You do not have permission to create tasks in this project' };
-  }
-  const projRow = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
-  if (!projRow) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  const title = String(body.title || '').trim();
-  if (!title) {
-    return { ok: false, status: 400, error: 'Task title is required' };
-  }
-  const projMemSet = scope.projectMemberMap.get(projectId) || new Set();
-  const validAssignee = body.assignee && (projMemSet.has(body.assignee) || scope.adminIds.has(body.assignee)) ? body.assignee : null;
-  const now = Date.now();
-  const tid = body.id || 't_' + crypto.randomBytes(4).toString('hex');
-  const seq = (projRow.seq || 200) + 1;
-  const tKey = body.key || `${projRow.key}-${seq}`;
-
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE projects SET seq = ?, last_activity = 0 WHERE id = ?').run(seq, projectId);
-    db.prepare(
-      `INSERT INTO tasks (
-        id, key, project_id, title, status, prev_status, assignee_id, priority,
-        due_date, start_date, description, estimate, created_at, updated_at,
-        completed_at, sort_order, fav, recur, archived, archived_at
-      ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, NULL, 0, NULL)`,
-    ).run(
-      tid,
-      tKey,
-      projectId,
-      title,
-      body.status || 'todo',
-      validAssignee,
-      body.priority || 'none',
-      body.due || null,
-      body.start || null,
-      body.desc || '',
-      body.estimate || null,
-      now,
-      now,
-      seq,
-    );
-    db.prepare('INSERT INTO activity_log (id, actor_id, verb, task_id, project_id, created_at, extra, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 0)').run(
-      'a_' + crypto.randomBytes(4).toString('hex'),
-      actorMemberId,
-      'created',
-      tid,
-      projectId,
-      now,
-      '',
-    );
-  });
-  tx();
-  const state = loadState(actorMemberId);
-  return { ok: true, status: 201, task: state.data.tasks.find(t => t.id === tid) };
-}
-
-export function patchTaskResource(actorMemberId, taskId, body = {}) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  const prev = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-  if (!prev || !canReadProject(scope, prev.project_id)) {
-    return { ok: false, status: 404, error: 'Task not found' };
-  }
-  if (!canWriteProject(scope, prev.project_id, 'edit')) {
-    return { ok: false, status: 403, error: 'You do not have permission to edit tasks in this project' };
-  }
-  const targetProjId = body.project !== undefined ? body.project : prev.project_id;
-  if (!canReadProject(scope, targetProjId) || !canWriteProject(scope, targetProjId, 'edit')) {
-    return { ok: false, status: 404, error: 'Target project not found' };
-  }
-  const projMemSet = scope.projectMemberMap.get(targetProjId) || new Set();
-  const rawAssignee = body.assignee !== undefined ? body.assignee : prev.assignee_id;
-  const validAssignee = rawAssignee && (projMemSet.has(rawAssignee) || scope.adminIds.has(rawAssignee)) ? rawAssignee : null;
-  const now = Date.now();
-
-  const tx = db.transaction(() => {
-    db.prepare(
-      `UPDATE tasks SET
-        project_id = ?, title = ?, status = ?, assignee_id = ?, priority = ?,
-        due_date = ?, start_date = ?, description = ?, estimate = ?, updated_at = ?,
-        fav = ?, archived = ?
-       WHERE id = ?`,
-    ).run(
-      targetProjId,
-      body.title !== undefined ? String(body.title).trim() || prev.title : prev.title,
-      body.status || prev.status,
-      validAssignee,
-      body.priority || prev.priority,
-      body.due !== undefined ? body.due || null : prev.due_date,
-      body.start !== undefined ? body.start || null : prev.start_date,
-      body.desc !== undefined ? body.desc : prev.description,
-      body.estimate !== undefined ? body.estimate || null : prev.estimate,
-      now,
-      body.fav !== undefined ? (body.fav ? 1 : 0) : prev.fav,
-      body.archived !== undefined ? (body.archived ? 1 : 0) : prev.archived,
-      taskId,
-    );
-  });
-  tx();
-  const state = loadState(actorMemberId);
-  return { ok: true, status: 200, task: state.data.tasks.find(t => t.id === taskId) };
-}
-
-export function deleteTaskResource(actorMemberId, taskId) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  const prev = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-  if (!prev || !canReadProject(scope, prev.project_id)) {
-    return { ok: false, status: 404, error: 'Task not found' };
-  }
-  if (!canWriteProject(scope, prev.project_id, 'edit')) {
-    return { ok: false, status: 403, error: 'You do not have permission to delete tasks in this project' };
-  }
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
-  return { ok: true, status: 200, deletedId: taskId };
-}
-
-export function createCommentResource(actorMemberId, taskId, body = {}) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  const tk = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-  if (!tk || !canReadProject(scope, tk.project_id)) {
-    return { ok: false, status: 404, error: 'Task not found' };
-  }
-  if (!canWriteProject(scope, tk.project_id, 'comment')) {
-    return { ok: false, status: 403, error: 'You do not have permission to comment on this project' };
-  }
-  const text = String(body.text || '').trim();
-  if (!text) {
-    return { ok: false, status: 400, error: 'Comment text is required' };
-  }
-  const cid = body.id || 'c_' + crypto.randomBytes(4).toString('hex');
-  const now = Date.now();
-  const cnt = db.prepare('SELECT COUNT(*) AS n FROM comments WHERE task_id = ?').get(taskId).n;
-  db.prepare('INSERT INTO comments (id, task_id, author_id, created_at, text, reactions_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    cid,
-    taskId,
-    actorMemberId,
-    now,
-    text,
-    '{}',
-    cnt,
-  );
-  return {
-    ok: true,
-    status: 201,
-    comment: { id: cid, task: taskId, by: actorMemberId, at: now, text, re: {} },
-  };
-}
-
-/* =====================================================================
-   PHASE 5: GRANULAR RESOURCE ENDPOINTS (NON-ENUMERABLE 404 ON OUT-OF-SCOPE)
-   ===================================================================== */
-
-export function getProjectResource(actorMemberId, projectId) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  if (!canReadProject(scope, projectId)) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  const state = loadState(actorMemberId);
-  const project = state.data.projects.find(p => p.id === projectId);
-  if (!project) {
-    return { ok: false, status: 404, error: 'Project not found' };
-  }
-  const tasks = state.data.tasks.filter(t => t.project === projectId);
-  const taskIds = new Set(tasks.map(t => t.id));
-  const comments = state.data.comments.filter(c => taskIds.has(c.task));
-  const files = state.data.files.filter(f => f.project === projectId);
-  const events = state.data.events.filter(e => e.project === projectId);
-  const activity = state.data.activity.filter(a => a.project === projectId);
-  return { ok: true, status: 200, project, tasks, comments, files, events, activity };
-}
-
-export function createProjectResource(actorMemberId, body = {}) {
-  const db = getDb();
-  const scope = getScope(db, actorMemberId);
-  if (!scope.isAdmin) {
-    return { ok: false, status: 403, error: 'Only workspace owners and admins can create projects' };
-  }
-  const name = String(body.name || '').trim();
-  if (!name) {
-    return { ok: false, status: 400, error: 'Project name is required' };
-  }
-  const now = Date.now();
-  const pid = body.id || 'p_' + crypto.randomBytes(4).toString('hex');
-  const key = String(body.key || name.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'PRJ')
     .trim()
     .toUpperCase();
   const leadId = body.lead || actorMemberId;

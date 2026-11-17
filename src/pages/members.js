@@ -119,8 +119,8 @@ export function pageMember() {
   const ts = allTasks().filter(t => t.assignee === m.id);
   const open = ts.filter(t => t.status !== 'done');
   const done = ts.filter(t => t.status === 'done');
-  const allVisProjs = visibleProjects().filter(p => p.status !== 'complete' && canSee(p));
-  const ps = allVisProjs.filter(p => p.members.includes(m.id) || p.lead === m.id);
+  const allVisProjs = visibleProjects().filter(canSee);
+  const ps = allVisProjs.filter(p => p.status !== 'complete' && (p.members.includes(m.id) || p.lead === m.id));
   const acts = D()
     .activity.filter(a => a.by === m.id)
     .slice(0, 8);
@@ -150,7 +150,7 @@ export function pageMember() {
       <div class="stack">
       ${
         admin
-          ? `<section class="panel"><div class="panel-h"><h2>Project access</h2><span class="faint" style="font-size:12px">${targetIsAdmin ? 'Full workspace access' : `${ps.length} of ${allVisProjs.length} assigned`}</span></div>${
+          ? `<section class="panel"><div class="panel-h"><h2>Project access</h2><span class="faint" style="font-size:12px">${targetIsAdmin ? 'Full workspace access' : `${allVisProjs.filter(p => p.members.includes(m.id) || p.lead === m.id).length} of ${allVisProjs.length} assigned`}</span></div>${
               targetIsAdmin
                 ? `<div class="panel-b faint" style="font-size:13px">${esc(m.name)} is a workspace ${esc(m.role)} and has automatic access to all projects.</div>`
                 : allVisProjs.length

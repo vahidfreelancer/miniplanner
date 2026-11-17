@@ -36,7 +36,10 @@ export const addD = (d, n) => {
   return x;
 };
 export const dOff = n => iso(addD(TODAY, n));
-export const diffD = (a, b) => Math.round((sod(a) - sod(b)) / DAY);
+export const diffD = (a, b) => {
+  if (!a || !b) return 0;
+  return Math.round((sod(a) - sod(b)) / DAY);
+};
 export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

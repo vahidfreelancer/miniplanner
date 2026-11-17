@@ -58,7 +58,7 @@ export function pageProject() {
         ${pIcon(p, 'lg', 18)}
         <h1>${esc(p.name)}</h1>
         <button class="ibtn ibtn-sm" data-a="toggleFavProj" data-id="${p.id}" data-tip="${p.fav ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${p.fav}" aria-label="Favorite" style="${p.fav ? 'color:var(--amber)' : ''}">${ic('star', 15)}</button>
-        <button class="pillbtn bordered" data-a="pop" data-pop="pstatus" data-id="${p.id}" aria-label="Project status" style="height:24px"><span class="pdot" style="--c:${PSTAT[p.status].c};border-radius:50%;width:7px;height:7px"></span>${PSTAT[p.status].name}${ic('chevron-down', 12)}</button>
+        <button class="pillbtn bordered" data-a="pop" data-pop="pstatus" data-id="${p.id}" aria-label="Project status" style="height:24px"><span class="pdot" style="--c:${(PSTAT[p.status] || PSTAT.planning).c};border-radius:50%;width:7px;height:7px"></span>${(PSTAT[p.status] || PSTAT.planning).name}${ic('chevron-down', 12)}</button>
         <span class="sp"></span>
         <div class="row" style="gap:4px">
           <button class="row" data-a="share" data-id="${p.id}" aria-label="Members" style="gap:0">${avStack(p.members, 5, 'md')}</button>
