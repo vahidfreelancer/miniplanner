@@ -2,7 +2,7 @@
 import { DAY, TODAY, diffD, esc, parse } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LABELS, PR, PRIOS, STATUSES } from '../core/constants.js';
-import { D, S, canSee, isOver, mem, pColor, proj, visibleProjects } from '../core/store.js';
+import { D, S, canSee, isOver, mem, pColor, proj, projectMembers, visibleMembers, visibleProjects } from '../core/store.js';
 import { av, prIcon, stIcon } from '../ui/helpers.js';
 
 export const FIELDS = {
@@ -10,10 +10,13 @@ export const FIELDS = {
   assignee: {
     name: 'Assignee',
     icon: 'user',
-    opts: () => [
-      { id: 'none', name: 'Unassigned', html: av(null, 'sm', false) },
-      ...D().members.map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false) })),
-    ],
+    opts: () => {
+      const pool = S.ui.route === 'project' && S.ui.params.id ? projectMembers(S.ui.params.id) : visibleMembers();
+      return [
+        { id: 'none', name: 'Unassigned', html: av(null, 'sm', false) },
+        ...pool.map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false) })),
+      ];
+    },
   },
   priority: { name: 'Priority', icon: 'signal-high', opts: () => PRIOS.map(p => ({ id: p.id, name: p.name, html: prIcon(p.id) })) },
   due: {
@@ -122,11 +125,13 @@ export function groupTasks(ts, g) {
   let groups;
   if (g === 'status') groups = STATUSES.map(s => ({ key: s.id, name: s.name, html: stIcon(s.id), set: { status: s.id } }));
   else if (g === 'priority') groups = PRIOS.map(p => ({ key: p.id, name: p.name, html: prIcon(p.id), set: { priority: p.id } }));
-  else if (g === 'assignee')
+  else if (g === 'assignee') {
+    const pool = S.ui.route === 'project' && S.ui.params.id ? projectMembers(S.ui.params.id) : visibleMembers();
     groups = [
-      ...D().members.map(m => ({ key: m.id, name: m.name, html: av(m.id, 'sm', false), set: { assignee: m.id } })),
+      ...pool.map(m => ({ key: m.id, name: m.name, html: av(m.id, 'sm', false), set: { assignee: m.id } })),
       { key: 'none', name: 'Unassigned', html: av(null, 'sm', false), set: { assignee: null } },
     ];
+  }
   else if (g === 'project')
     groups = visibleProjects()
       .filter(canSee)

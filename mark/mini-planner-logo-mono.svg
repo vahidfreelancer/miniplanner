@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="160" viewBox="0 0 560 160">
+  <g transform="translate(32,32)" fill="none" stroke="#1F2937" stroke-width="4">
+    <rect x="2" y="2" width="92" height="92" rx="20"/>
+    <circle cx="24" cy="24" r="5" fill="#1F2937" stroke="none"/>
+    <rect x="38" y="18" width="36" height="12" rx="6" fill="#1F2937" stroke="none"/>
+    <rect x="22" y="42" width="52" height="12" rx="6" fill="#1F2937" stroke="none" opacity="0.65"/>
+    <rect x="22" y="66" width="52" height="12" rx="6" fill="#1F2937" stroke="none" opacity="0.35"/>
+    <circle cx="70" cy="72" r="13"/>
+    <path d="M63.5 72 l4.5 4.5 l8.5 -9" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="150" y="98" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="46" font-weight="600" letter-spacing="-1" fill="#1F2937">
+    mini<tspan font-weight="300">-planner</tspan>
+  </text>
+  <text x="152" y="122" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="13" font-weight="400" letter-spacing="3" fill="#1F2937">PLAN · TASK · SHIP</text>
+</svg>

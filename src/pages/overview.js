@@ -2,7 +2,7 @@
 import { TODAY, diffD, esc, fmtDate, parse, relDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { STATUSES } from '../core/constants.js';
-import { D, allTasks, canSee, isOver, mem, pColor, progressOf, tasksOf, visibleProjects } from '../core/store.js';
+import { D, allTasks, canCreateProject, canSee, isAdmin, isOver, mem, pColor, progressOf, tasksOf, visibleMembers, visibleProjects } from '../core/store.js';
 import { av, pIcon, pStatus, progBar, stIcon } from '../ui/helpers.js';
 
 export function pageOverview() {
@@ -15,18 +15,19 @@ export function pageOverview() {
     .filter(m => diffD(parse(m.date), TODAY) >= 0)
     .sort((a, b) => (a.date > b.date ? 1 : -1))
     .slice(0, 6);
-  const load = D()
-    .members.filter(m => m.status === 'active')
+  const visMems = isAdmin() ? D().members : visibleMembers();
+  const load = visMems
+    .filter(m => m.status === 'active')
     .map(m => ({ m, ts: all.filter(t => t.assignee === m.id && t.status !== 'done') }))
     .sort((a, b) => b.ts.length - a.ts.length);
   const maxL = Math.max(...load.map(l => l.ts.length), 1);
   return `<div class="page">
-    <div class="ph"><div><h1>Workspace overview</h1><p>Health of every project in ${esc(D().ws.name)}.</p></div><div class="acts"><button class="btn btn-secondary" data-a="go" data-r="timeline">${ic('chart-gantt', 14)}Timeline</button><button class="btn btn-primary" data-a="newProject">${ic('plus', 14)}New project</button></div></div>
+    <div class="ph"><div><h1>Workspace overview</h1><p>Health of ${isAdmin() ? `every project in ${esc(D().ws.name)}` : 'your assigned projects'}.</p></div><div class="acts"><button class="btn btn-secondary" data-a="go" data-r="timeline">${ic('chart-gantt', 14)}Timeline</button>${canCreateProject() ? `<button class="btn btn-primary" data-a="newProject">${ic('plus', 14)}New project</button>` : ''}</div></div>
     <div class="stats" style="margin-bottom:16px">
       <div class="stat"><span class="k">Projects</span><span class="v">${ps.length}</span><span class="d">${ps.filter(p => p.status === 'complete').length} completed</span></div>
       <div class="stat"><span class="k">Tasks</span><span class="v">${all.length}</span><span class="d">${all.length - done} open</span></div>
-      <div class="stat"><span class="k">Completion rate</span><span class="v">${Math.round((done / Math.max(all.length, 1)) * 100)}%</span><span class="d">across all projects</span></div>
-      <div class="stat"><span class="k">Members</span><span class="v">${D().members.length}</span><span class="d">${D().members.filter(m => m.status === 'invited').length} pending invite</span></div>
+      <div class="stat"><span class="k">Completion rate</span><span class="v">${Math.round((done / Math.max(all.length, 1)) * 100)}%</span><span class="d">across ${isAdmin() ? 'all' : 'assigned'} projects</span></div>
+      <div class="stat"><span class="k">Members</span><span class="v">${visMems.length}</span><span class="d">${isAdmin() ? `${visMems.filter(m => m.status === 'invited').length} pending invite` : 'in your scope'}</span></div>
     </div>
     <div class="grid2">
       <section class="panel"><div class="panel-h"><h2>Portfolio</h2></div>

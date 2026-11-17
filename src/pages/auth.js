@@ -7,7 +7,7 @@ import { TEMPLATES } from '../overlays/modals.js';
 import { strengthMeter } from './settings.js';
 
 export function authShell(inner, topRight = '') {
-  return `<div class="auth"><div class="auth-top"><span class="brand">${LOGO(22)}</span><div class="row">${topRight}<button class="ibtn" data-a="toggleDark" data-tip="Toggle theme" aria-label="Toggle theme">${ic(effectiveDark() ? 'sun' : 'moon', 16)}</button></div></div>
+  return `<div class="auth"><div class="auth-top"><span class="brand">${LOGO(28)}</span><div class="row">${topRight}<button class="ibtn" data-a="toggleDark" data-tip="Toggle theme" aria-label="Toggle theme">${ic(effectiveDark() ? 'sun' : 'moon', 16)}</button></div></div>
     <div class="auth-c">${inner}</div>
     <div class="auth-foot" style="padding:18px;font-size:12px" ><span class="faint">© 2026 MiniPlanner · Terms · Privacy</span></div></div>`;
 }
@@ -25,7 +25,7 @@ export function renderAuth() {
   if (s === 'login')
     return authShell(
       `<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doLogin" novalidate>
-    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>Welcome back</h1><p class="sub">Sign in to ${esc(D().ws.name)}</p>
+    <div style="display:flex;justify-content:center">${LOGO(38)}</div><h1>Welcome back</h1><p class="sub">Sign in to ${esc(D().ws.name)}</p>
     ${e.login ? `<div class="alert danger" role="alert">${ic('circle-alert', 15)}<span>${e.login}</span></div>` : ''}
     <div class="field"><label class="label" for="l-email">Email</label><input class="input input-lg ${icls('email')}" id="l-email" type="email" value="${esc(f.email)}" autocomplete="email" aria-invalid="${!!e.email}" aria-describedby="email-err">${ferr('email')}</div>
     <div class="field"><div class="row"><label class="label" for="l-pw">Password</label><span class="sp"></span><button type="button" class="link" style="font-size:12.5px" data-a="auth" data-v="forgot">Forgot password?</button></div>
@@ -44,7 +44,7 @@ export function renderAuth() {
   if (s === 'signup')
     return authShell(
       `<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doSignup" novalidate>
-    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>Create your account</h1><p class="sub">Set up your workspace account credentials.</p>
+    <div style="display:flex;justify-content:center">${LOGO(38)}</div><h1>Create your account</h1><p class="sub">Set up your workspace account credentials.</p>
     ${socialBtns()}<div class="or">or sign up with email</div>
     <div class="field"><label class="label" for="s-name">Full name</label><input class="input input-lg ${icls('name')}" id="s-name" value="${esc(f.name)}" autocomplete="name" placeholder="Your full name">${ferr('name')}</div>
     <div class="field"><label class="label" for="s-email">Work email</label><input class="input input-lg ${icls('email')}" id="s-email" type="email" value="${esc(f.email)}" autocomplete="email" placeholder="you@company.com">${ferr('email')}</div>
@@ -65,13 +65,19 @@ export function renderAuth() {
     <button class="btn btn-primary btn-lg btn-block" data-a="auth" data-v="reset">Open reset link</button><div class="alert info">${ic('info', 14)}<span>In this prototype, the button above stands in for the link in your email.</span></div>
     <p class="auth-foot">Didn't get it? <button class="link" data-a="resend" data-v="reset">Resend email</button></p><p class="auth-foot"><button class="link row" style="display:inline-flex;gap:6px" data-a="auth" data-v="login">${ic('arrow-left', 14)}Back to sign in</button></p></div>`);
   if (s === 'reset')
-    return authShell(`<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doReset" novalidate><div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>Choose a new password</h1><p class="sub">for ${esc(f.email)}</p>
+    return authShell(`<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doReset" novalidate><div style="display:flex;justify-content:center">${LOGO(38)}</div><h1>Choose a new password</h1><p class="sub">for ${esc(f.email)}</p>
     <div class="field"><label class="label" for="r-pw">New password</label><input class="input input-lg ${icls('pw')}" id="r-pw" type="password" data-in="pwStrength" value="${esc(S.ui.pwNew || '')}" autocomplete="new-password">${strengthMeter(S.ui.pwNew || '')}${ferr('pw')}</div>
     <div class="field"><label class="label" for="r-pw2">Confirm password</label><input class="input input-lg ${icls('pw2')}" id="r-pw2" type="password" autocomplete="new-password">${ferr('pw2')}</div>
     <button class="btn btn-primary btn-lg btn-block" data-a="doReset" id="reset-btn">Reset password</button></form>`);
   if (s === 'reset-done')
     return authShell(
       `<div class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}"><div style="display:flex;justify-content:center"><span class="ftype" style="--c:var(--green);width:44px;height:44px;border-radius:11px">${ic('circle-check', 20)}</span></div><h1>Password updated</h1><p class="sub">You can now sign in with your new password.</p><button class="btn btn-primary btn-lg btn-block" data-a="auth" data-v="login">Sign in</button></div>`,
+    );
+  if (s === 'pending-approval')
+    return authShell(
+      `<div class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}"><div style="display:flex;justify-content:center"><span class="ftype" style="--c:var(--amber);width:44px;height:44px;border-radius:11px">${ic('clock', 20)}</span></div><h1>Awaiting admin confirmation</h1><p class="sub">Your account <b style="color:var(--text)">${esc(f.email)}</b> has been created and is currently <b>Deactive</b>.</p>
+    <div class="alert info">${ic('shield-check', 15)}<span>An administrator must confirm and activate your registration before you can sign in to the workspace.</span></div>
+    <button class="btn btn-primary btn-lg btn-block" data-a="auth" data-v="login">Back to sign in</button></div>`,
     );
   if (s === 'verify')
     return authShell(`<div class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}"><div style="display:flex;justify-content:center"><span class="ftype" style="--c:var(--accent);width:44px;height:44px;border-radius:11px">${ic('mail', 20)}</span></div><h1>Verify your email</h1><p class="sub">We sent a verification link to <b style="color:var(--text)">${esc(f.email)}</b>. Click it to activate your account.</p>

@@ -2,7 +2,7 @@
 import { MOD, TODAY, diffD, esc, parse } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, allTasks, mem, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, canCreateProject, isAdmin, mem, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
 import { av } from '../ui/helpers.js';
 import { ROUTE_NAMES } from './render.js';
 import { skeleton } from './skeletons.js';
@@ -112,7 +112,7 @@ export function renderSidebar() {
         ${sItem('activity', 'Activity', 'activity')}
       </div>
       <div class="sgroup" id="side-projects">
-        <div class="sgroup-h"><span>Projects</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newProject" data-tip="New project  P" aria-label="New project">${ic('plus', 14)}</button></div>
+        <div class="sgroup-h"><span>Projects</span><span class="sp"></span>${canCreateProject() ? `<button class="ibtn ibtn-xs" data-a="newProject" data-tip="New project  P" aria-label="New project">${ic('plus', 14)}</button>` : ''}</div>
         ${projs
           .map(p => {
             const open = !!u.expanded[p.id];
@@ -144,12 +144,16 @@ export function renderSidebar() {
           .join('')}
         ${sItem('archive', 'Archive', 'archive', { ct: D().tasks.filter(t => t.archived).length + D().projects.filter(p => p.archived).length || '' })}
       </div>
-      <div class="sgroup">
+      ${
+        isAdmin()
+          ? `<div class="sgroup">
         <div class="sgroup-h"><span>Teams</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newTeam" data-tip="New team" aria-label="New team">${ic('plus', 14)}</button></div>
         ${teamsList()
           .map(t => sItem('team', t.name, t.icon, { id: t.id }))
           .join('')}
-      </div>
+      </div>`
+          : ''
+      }
     </div>
     <div class="side-bot">
       <button class="sitem" data-a="pop" data-pop="help" ${u.collapsed ? 'data-tip="Help" data-tip-pos="right"' : ''}>${ic('circle-help', 16)}<span>Help & resources</span></button>

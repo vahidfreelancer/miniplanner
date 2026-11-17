@@ -4,7 +4,7 @@
 import { esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, canSee, proj, tasksOf } from '../core/store.js';
+import { D, S, canEditTask, canSee, isAdmin, proj, tasksOf } from '../core/store.js';
 import { avStack, empty, pIcon } from '../ui/helpers.js';
 import { applyView, groupTasks, viewOf, viewToolbar } from '../shell/view-engine.js';
 import { listHtml } from '../components/task-list.js';
@@ -62,9 +62,8 @@ export function pageProject() {
         <span class="sp"></span>
         <div class="row" style="gap:4px">
           <button class="row" data-a="share" data-id="${p.id}" aria-label="Members" style="gap:0">${avStack(p.members, 5, 'md')}</button>
-          <button class="ibtn ibtn-sm" data-a="share" data-id="${p.id}" data-tip="Add member" aria-label="Add member">${ic('user-plus', 15)}</button>
-          <button class="btn btn-secondary btn-sm hide-m" data-a="share" data-id="${p.id}">${ic('share-2', 13)}Share</button>
-          <button class="ibtn ibtn-sm" data-a="editProject" data-id="${p.id}" data-tip="Project settings" aria-label="Project settings">${ic('settings', 15)}</button>
+          ${isAdmin() ? `<button class="ibtn ibtn-sm" data-a="share" data-id="${p.id}" data-tip="Add member" aria-label="Add member">${ic('user-plus', 15)}</button><button class="btn btn-secondary btn-sm hide-m" data-a="share" data-id="${p.id}">${ic('share-2', 13)}Share</button>` : ''}
+          ${canEditTask(p) ? `<button class="ibtn ibtn-sm" data-a="editProject" data-id="${p.id}" data-tip="Project settings" aria-label="Project settings">${ic('settings', 15)}</button>` : ''}
           <button class="ibtn ibtn-sm" data-a="ctxBtn" data-ctx="project" data-id="${p.id}" aria-label="More">${ic('ellipsis', 15)}</button>
         </div>
       </div>

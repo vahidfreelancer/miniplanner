@@ -54,9 +54,23 @@ import './features/archive.js';
 import './actions/teams.js';
 import './actions/subtasks.js';
 import './actions/archive.js';
-import { S, D, hydrate } from './core/store.js';
+import { S, D, hydrate, proj, refreshState, task } from './core/store.js';
 import { A } from './actions/actions.js';
 import { ROUTE_NAMES, render, go } from './shell/render.js';
+
+async function syncOnFocus() {
+  if (S.ui.auth || S.ui.modals.length || S.ui.pop || S.ui.palette) return;
+  const ok = await refreshState();
+  if (!ok) return;
+  if (S.ui.drawer && !task(S.ui.drawer)) {
+    S.ui.drawer = null;
+  }
+  if (S.ui.route === 'project' && S.ui.params.id && !proj(S.ui.params.id)) {
+    go('projects');
+    return;
+  }
+  render();
+}
 
 (async function init() {
   await hydrate();
@@ -74,6 +88,7 @@ import { ROUTE_NAMES, render, go } from './shell/render.js';
   else if (h && ROUTE_NAMES[h]) S.ui.route = h;
   else S.ui.route = S.prefs.home || 'home';
   render();
+  window.addEventListener('focus', syncOnFocus);
 })();
 
 // Dev-only handle for debugging and screenshot tooling; stripped from production builds.

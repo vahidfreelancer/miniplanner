@@ -1,7 +1,7 @@
 /* ---------------- CONTEXT MENUS ---------------- */
 import { ic } from '../core/icons.js';
 import { ST } from '../core/constants.js';
-import { D, isAdmin, mem, proj, task, visibleProjects } from '../core/store.js';
+import { D, canEditTask, isAdmin, mem, proj, task, visibleProjects } from '../core/store.js';
 
 export function ctxMenu(p) {
   const I = (act, icon, label, extra = '', r = '') =>
@@ -31,19 +31,22 @@ export function ctxMenu(p) {
   if (p.ctx === 'project') {
     const pr = proj(p.id);
     if (!pr) return '';
+    const admin = isAdmin();
     return (
       I('openProject', 'arrow-up-right', 'Open') +
       I('toggleFavProj', 'star', pr.fav ? 'Remove from favorites' : 'Add to favorites') +
-      I('editProject', 'pencil', 'Rename & edit') +
-      I('share', 'share-2', 'Share') +
+      (canEditTask(pr) ? I('editProject', 'pencil', 'Rename & edit') : '') +
+      I('share', 'share-2', admin ? 'Manage access' : 'View members') +
       I('copyLink', 'link', 'Copy link') +
-      I('dupProject', 'copy', 'Duplicate') +
+      (admin ? I('dupProject', 'copy', 'Duplicate') : '') +
       sep +
       (visibleProjects().indexOf(pr) > 0 ? I('projUp', 'arrow-up', 'Move up in sidebar') : '') +
       (visibleProjects().indexOf(pr) < visibleProjects().length - 1 ? I('projDown', 'arrow-down', 'Move down in sidebar') : '') +
-      sep +
-      I('archiveProject', 'archive', pr.status === 'complete' ? 'Archive' : 'Archive project') +
-      I('delProject', 'trash-2', 'Delete project', 'danger')
+      (admin
+        ? sep +
+          I('archiveProject', 'archive', pr.status === 'complete' ? 'Archive' : 'Archive project') +
+          I('delProject', 'trash-2', 'Delete project', 'danger')
+        : '')
     );
   }
   if (p.ctx === 'column') {
@@ -62,9 +65,14 @@ export function ctxMenu(p) {
     return (
       I('viewProfile', 'user', 'View profile') +
       I('assignToMember', 'plus', 'Assign a task') +
-      I('copyEmail', 'mail', 'Copy email') +
+      (m.email ? I('copyEmail', 'mail', 'Copy email') : '') +
       (canRm
-        ? I('ctxRole', 'shield', 'Change role…') +
+        ? I(
+            'toggleMemberStatus',
+            m.status === 'deactivated' ? 'user-check' : 'user-x',
+            m.status === 'deactivated' ? 'Confirm & activate account' : 'Deactivate account',
+          ) +
+          I('ctxRole', 'shield', 'Change role…') +
           (m.status === 'invited' ? I('resendInvite', 'send', 'Resend invite') : '') +
           sep +
           I('removeMember', 'user-minus', 'Remove from workspace', 'danger')

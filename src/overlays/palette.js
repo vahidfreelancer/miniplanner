@@ -2,7 +2,7 @@
 import { MOD, clamp, esc } from '../core/utils.js';
 import { LOGO, ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, allTasks, pColor, proj, save, task, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, canCreateProject, canInvite, pColor, proj, save, task, visibleProjects } from '../core/store.js';
 import { FT, av, hl, stIcon } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { go, render } from '../shell/render.js';
@@ -14,7 +14,7 @@ import { A } from '../actions/actions.js';
 export function commands() {
   return [
     { id: 'c-task', name: 'Create task', icon: 'plus', kbd: 'N', run: () => A.newTask(document.body) },
-    { id: 'c-proj', name: 'Create project', icon: 'folder-plus', kbd: 'P', run: () => A.newProject() },
+    ...(canCreateProject() ? [{ id: 'c-proj', name: 'Create project', icon: 'folder-plus', kbd: 'P', run: () => A.newProject() }] : []),
     {
       id: 'c-search',
       name: 'Search workspace',
@@ -50,7 +50,7 @@ export function commands() {
       kbd: MOD + ' ⇧ L',
       run: () => A.toggleDark(),
     },
-    { id: 'c-inv', name: 'Invite member', icon: 'user-plus', run: () => A.invite() },
+    ...(canInvite() ? [{ id: 'c-inv', name: 'Invite member', icon: 'user-plus', run: () => A.invite() }] : []),
     { id: 'c-side', name: 'Toggle sidebar', icon: 'panel-left', kbd: '[', run: () => A.toggleSide() },
     { id: 'c-keys', name: 'Keyboard shortcuts', icon: 'keyboard', kbd: '?', run: () => A.shortcuts() },
     { id: 'c-out', name: 'Sign out', icon: 'log-out', run: () => A.signOut() },
@@ -112,7 +112,7 @@ export function paletteItems() {
     const sug = [
       { icon: 'clock-alert', name: 'Overdue tasks', run: () => A.goTasks({ dataset: { f: 'overdue' } }) },
       { icon: 'user', name: 'Tasks assigned to me', run: () => go('mytasks') },
-      { icon: 'folder-plus', name: 'Create a new project', run: () => A.newProject() },
+      ...(canCreateProject() ? [{ icon: 'folder-plus', name: 'Create a new project', run: () => A.newProject() }] : []),
     ];
     const firstProj = visibleProjects()[0];
     if (firstProj) {
@@ -231,6 +231,6 @@ export function paletteHtml() {
             .join('')
         : `<div class="empty-state sm"><div class="glyph">${ic('search-x', 18)}</div><h2 class="es-h">No results found</h2><p>Try a different keyword, or press Tab to search everything.</p></div>`
     }</div>
-    <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>navigate</span><span><kbd>↵</kbd>select</span>${pl.mode === 'cmd' ? '<span><kbd>Tab</kbd>search mode</span>' : '<span><kbd>⌫</kbd>back to commands</span>'}<span class="sp" style="flex:1"></span><span>${LOGO(12)}</span></div>
+    <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>navigate</span><span><kbd>↵</kbd>select</span>${pl.mode === 'cmd' ? '<span><kbd>Tab</kbd>search mode</span>' : '<span><kbd>⌫</kbd>back to commands</span>'}<span class="sp" style="flex:1"></span><span>${LOGO(18)}</span></div>
   </div>`;
 }

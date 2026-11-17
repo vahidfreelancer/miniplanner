@@ -100,8 +100,6 @@ export async function hydrate() {
     if (authRes.ok) {
       const auth = await authRes.json();
       if (auth.setupRequired) {
-        const j = await load();
-        if (j) applyServerState(j);
         S.ui.auth = 'signup';
         return;
       }
@@ -117,6 +115,13 @@ export async function hydrate() {
   if (j) {
     applyServerState(j);
   }
+}
+export async function refreshState() {
+  if (S.ui.auth || S.ui.offline) return false;
+  const j = await load();
+  if (!j) return false;
+  applyServerState(j);
+  return true;
 }
 export let _saveT;
 export function save(action = 'save_state') {
@@ -165,10 +170,40 @@ export const visibleProjects = () =>
     .filter(p => !p.archived);
 export const isOwner = () => me().role === 'Owner';
 export const isAdmin = () => ['Owner', 'Admin'].includes(me().role);
-export const canCreateProject = () => isAdmin() || (me().role === 'Member' && S.prefs.permCreate !== false);
-export const canInvite = () => isAdmin() || (me().role === 'Member' && S.prefs.permGuests !== false);
-export const canEditTask = (p = null) => me().role !== 'Guest' || Boolean(p && p.perms?.[D().me] === 'edit');
-export const canSee = p => Boolean(p && (isAdmin() || (me().role === 'Guest' ? p.members.includes(D().me) : !p.private || p.members.includes(D().me))));
+export const canCreateProject = () => isAdmin();
+export const canInvite = () => isAdmin();
+export const canManageProject = () => isAdmin();
+export const canEditTask = (p = null) => {
+  if (isAdmin()) return true;
+  if (!p) return me().role !== 'Guest';
+  if (!p.members?.includes(D().me) && p.lead !== D().me) return false;
+  if (p.lead === D().me) return true;
+  const perm = String(p.perms?.[D().me] || '').toLowerCase();
+  if (perm === 'can view' || perm === 'viewer' || perm === 'can comment' || perm === 'commenter') return false;
+  if (perm === 'can edit' || perm === 'editor' || perm === 'full access' || perm === 'lead') return true;
+  return me().role !== 'Guest';
+};
+export const canSee = p => Boolean(p && (isAdmin() || p.lead === D().me || (Array.isArray(p.members) && p.members.includes(D().me))));
+export const projectMembers = pid => {
+  const p = typeof pid === 'object' ? pid : proj(pid);
+  if (!p) {
+    return isAdmin() ? D().members.filter(m => m.status !== 'deactivated') : visibleMembers();
+  }
+  const memberSet = new Set(p.members || []);
+  if (p.lead) memberSet.add(p.lead);
+  return D().members.filter(
+    m => m.status !== 'deactivated' && (memberSet.has(m.id) || m.role === 'Owner' || m.role === 'Admin'),
+  );
+};
+export const visibleMembers = () => {
+  if (isAdmin()) return D().members;
+  const coIds = new Set([D().me]);
+  for (const p of visibleProjects().filter(canSee)) {
+    (p.members || []).forEach(id => coIds.add(id));
+    if (p.lead) coIds.add(p.lead);
+  }
+  return D().members.filter(m => coIds.has(m.id) || m.role === 'Owner' || m.role === 'Admin');
+};
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.due && t.status !== 'done' && diffD(parse(t.due), TODAY) < 0;
@@ -193,6 +228,7 @@ export function logAct(verb, t, extra = '') {
 /* ---------- teams (workspace data, seeded on first use) ---------- */
 export const NO_TEAM = { id: '', name: 'No team', icon: 'users', c: '#8A867E', desc: '' };
 export function teamsList() {
+  if (!isAdmin()) return [];
   const d = D();
   if (!d.teams) d.teams = TEAMS_SEED.map(t => ({ ...t }));
   return d.teams;

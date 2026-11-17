@@ -4,13 +4,15 @@
 import { esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PCOLORS, PICONS } from '../core/constants.js';
-import { D, S, TM } from '../core/store.js';
-import { av } from '../ui/helpers.js';
+import { D, S, TM, visibleProjects } from '../core/store.js';
+import { av, pIcon } from '../ui/helpers.js';
 
 export function teamModal(m, H) {
   const f = S.ui.tform;
   const err = S.ui.errors.tname;
   const people = D().members.filter(x => x.status !== 'deactivated');
+  const projs = visibleProjects();
+  const selProjs = f.projects || [];
   return `${H(m.edit ? 'Edit team' : 'New team', m.edit ? '' : 'Teams group the people who work on projects together.')}
   <form class="modal-b" data-submit="submitTeam">
     <div class="row" style="gap:10px;align-items:flex-start">
@@ -29,8 +31,15 @@ export function teamModal(m, H) {
         )
         .join('')}</div></div>
     </div>
+    <fieldset class="field" style="border:0;padding:0;margin:0"><legend class="label" style="margin-bottom:6px">Projects <span class="faint" style="font-weight:400">· ${selProjs.length} selected</span></legend>
+      ${
+        projs.length
+          ? `<div class="panel" style="max-height:160px;overflow-y:auto;padding:4px">${projs.map(p => `<label class="mi" style="cursor:pointer;min-height:36px"><input type="checkbox" class="check" data-a="tformProject" data-id="${p.id}" ${selProjs.includes(p.id) ? 'checked' : ''}>${pIcon(p, '', 14)}<span class="grow trunc">${esc(p.name)}</span><span class="r">${p.team && p.team !== m.edit ? esc(TM[p.team].name) : ''}</span></label>`).join('')}</div>`
+          : `<div class="panel faint" style="padding:10px 12px;font-size:12.5px">No projects created yet.</div>`
+      }
+      <span class="hint">Select one or more projects for this team to own.</span></fieldset>
     <fieldset class="field" style="border:0;padding:0;margin:0"><legend class="label" style="margin-bottom:6px">Members <span class="faint" style="font-weight:400">· ${f.members.length} selected</span></legend>
-      <div class="panel" style="max-height:220px;overflow-y:auto;padding:4px">${people.map(x => `<label class="mi" style="cursor:pointer;min-height:36px"><input type="checkbox" class="check" data-a="tformMember" data-id="${x.id}" ${f.members.includes(x.id) ? 'checked' : ''}>${av(x.id, 'sm', false)}<span class="grow trunc">${esc(x.name)}</span><span class="r">${x.team && x.team !== m.edit ? esc(TM[x.team].name) : ''}</span></label>`).join('')}</div>
+      <div class="panel" style="max-height:180px;overflow-y:auto;padding:4px">${people.map(x => `<label class="mi" style="cursor:pointer;min-height:36px"><input type="checkbox" class="check" data-a="tformMember" data-id="${x.id}" ${f.members.includes(x.id) ? 'checked' : ''}>${av(x.id, 'sm', false)}<span class="grow trunc">${esc(x.name)}</span><span class="r">${x.team && x.team !== m.edit ? esc(TM[x.team].name) : ''}</span></label>`).join('')}</div>
       <span class="hint">Everyone belongs to one primary team. Adding someone here moves them from their current team.</span></fieldset>
   </form>
   <div class="modal-f">${m.edit ? `<button class="btn btn-danger-ghost" data-a="delTeam" data-id="${m.edit}">${ic('trash-2', 14)}Delete team</button>` : ''}<span class="sp"></span><button class="btn btn-secondary" data-a="closeModal">Cancel</button><button class="btn btn-primary" data-a="submitTeam">${m.edit ? 'Save changes' : 'Create team'}</button></div>`;

@@ -3,7 +3,7 @@
    ===================================================================== */
 import { MOD, TODAY, ago, diffD, esc, fmtDate, parse, relDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, commentsOf, isOver, mem, pColor, proj, task } from '../core/store.js';
+import { D, S, commentsOf, isOver, mem, pColor, proj, projectMembers, task } from '../core/store.js';
 import { FT, av, filePrev, fileType, fmtComment, lbl, progBar } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
 import { cellAssignee, cellDue, cellPrio, cellProject, cellStatus } from '../components/task-list.js';
@@ -38,8 +38,8 @@ export function drawerHtml(t) {
   const ups = (u.uploads || []).filter(x => x.task === t.id);
   const ment =
     u.mention && u.mention.tid === t.id
-      ? D()
-          .members.filter(
+      ? projectMembers(t.project)
+          .filter(
             m => m.name.toLowerCase().startsWith(u.mention.q.toLowerCase()) || m.name.split(' ')[1]?.toLowerCase().startsWith(u.mention.q.toLowerCase()),
           )
           .slice(0, 5)

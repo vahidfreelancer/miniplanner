@@ -95,6 +95,13 @@
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --dur: 140ms;
+  /* MiniPlanner brand logo tokens (day / light theme) */
+  --mp-grad-0: #2563eb;
+  --mp-grad-1: #06b6d4;
+  --mp-check: #0e7490;
+  --mp-word-1: #111827;
+  --mp-word-2: #2563eb;
+  --mp-tag: #6b7280;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -135,6 +142,12 @@
     --shadow-card: 0 0 0 1px var(--border);
     --shadow-pop: 0 16px 40px -10px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-strong);
     --shadow-drag: 0 18px 40px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-strong);
+    --mp-grad-0: #3b82f6;
+    --mp-grad-1: #22d3ee;
+    --mp-check: #155e75;
+    --mp-word-1: #f8fafc;
+    --mp-word-2: #38bdf8;
+    --mp-tag: #94a3b8;
     color-scheme: dark;
   }
 }
@@ -175,6 +188,12 @@
   --shadow-card: 0 0 0 1px var(--border);
   --shadow-pop: 0 16px 40px -10px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-strong);
   --shadow-drag: 0 18px 40px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-strong);
+  --mp-grad-0: #3b82f6;
+  --mp-grad-1: #22d3ee;
+  --mp-check: #155e75;
+  --mp-word-1: #f8fafc;
+  --mp-word-2: #38bdf8;
+  --mp-tag: #94a3b8;
   color-scheme: dark;
 }
 /* accent variants */

@@ -2,7 +2,25 @@
 import { $, MOD, MONL, TODAY, WD, addD, dOff, diffD, esc, fmtDate, iso, parse } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { LABELS, PRIOS, PSTAT, STATUSES } from '../core/constants.js';
-import { D, S, allTasks, canSee, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import {
+  D,
+  NO_TEAM,
+  S,
+  allTasks,
+  canCreateProject,
+  canInvite,
+  canSee,
+  isAdmin,
+  me,
+  mem,
+  pColor,
+  proj,
+  projectMembers,
+  task,
+  teamsList,
+  visibleMembers,
+  visibleProjects,
+} from '../core/store.js';
 import { av, avStack, prIcon, stIcon } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
@@ -97,19 +115,18 @@ export function popHtml(p) {
   const t = ['status', 'priority', 'assignee', 'labels', 'date', 'project', 'deps', 'recur', 'estimate'].includes(p.type) ? tgt(p) : null;
   switch (p.type) {
     case 'create':
-      inner = `<div class="mh">Create</div><button class="mi" data-a="newTask">${ic('circle-check', 15)}Task<span class="r"><kbd>N</kbd></span></button><button class="mi" data-a="newProject">${ic('folder-plus', 15)}Project<span class="r"><kbd>P</kbd></span></button><button class="mi" data-a="newTeam">${ic('users', 15)}Team</button><div class="msep"></div><button class="mi" data-a="invite">${ic('user-plus', 15)}Invite member</button>`;
+      inner = `<div class="mh">Create</div><button class="mi" data-a="newTask">${ic('circle-check', 15)}Task<span class="r"><kbd>N</kbd></span></button>${canCreateProject() ? `<button class="mi" data-a="newProject">${ic('folder-plus', 15)}Project<span class="r"><kbd>P</kbd></span></button>` : ''}${isAdmin() ? `<button class="mi" data-a="newTeam">${ic('users', 15)}Team</button>` : ''}${canInvite() ? `<div class="msep"></div><button class="mi" data-a="invite">${ic('user-plus', 15)}Invite member</button>` : ''}`;
       style = 'width:220px';
       break;
     case 'subassignee': {
       const tk = task(p.id);
       const sb = tk?.subtasks[p.i];
       if (!sb) break;
+      const pool = projectMembers(tk?.project);
       inner = popList(
         [
           { id: '', name: 'Unassigned', html: av(null, 'sm', false), on: !sb.assignee },
-          ...D()
-            .members.filter(m => m.status !== 'deactivated')
-            .map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: sb.assignee === m.id })),
+          ...pool.map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: sb.assignee === m.id })),
         ],
         { search: 'Assign subtask to…' },
       );
@@ -121,17 +138,17 @@ export function popHtml(p) {
     case 'priority':
       inner = popList(PRIOS.map(x => ({ id: x.id, name: x.name, html: prIcon(x.id), on: t?.priority === x.id })));
       break;
-    case 'assignee':
+    case 'assignee': {
+      const pool = projectMembers(t?.project);
       inner = popList(
         [
           { id: '', name: 'Unassigned', html: av(null, 'sm', false), on: !t?.assignee },
-          ...D()
-            .members.filter(m => m.status !== 'deactivated')
-            .map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: t?.assignee === m.id })),
+          ...pool.map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: t?.assignee === m.id })),
         ],
         { search: 'Assign to…' },
       );
       break;
+    }
     case 'labels':
       inner = popList(
         LABELS.map(l => ({
@@ -201,6 +218,29 @@ export function popHtml(p) {
       );
       break;
     }
+    case 'pteam': {
+      const pr = proj(p.id);
+      inner =
+        popList(
+          [
+            {
+              id: '',
+              name: NO_TEAM.name,
+              html: `<span style="color:${NO_TEAM.c};display:inline-flex">${ic(NO_TEAM.icon, 14)}</span>`,
+              on: !pr.team,
+            },
+            ...teamsList().map(tm => ({
+              id: tm.id,
+              name: tm.name,
+              html: `<span style="color:${tm.c};display:inline-flex">${ic(tm.icon, 14)}</span>`,
+              on: pr.team === tm.id,
+            })),
+          ],
+          { search: 'Assign team…' },
+        ) + `<div class="msep"></div><button class="mi" data-a="newTeam">${ic('plus', 14)}New team</button>`;
+      style = 'width:220px';
+      break;
+    }
     case 'role': {
       const m = mem(p.id);
       inner =
@@ -208,7 +248,7 @@ export function popHtml(p) {
         ['Admin', 'Member', 'Guest']
           .map(
             r =>
-              `<button class="mi" data-a="popPick" data-v="${r}" style="height:auto;padding:7px 8px;align-items:flex-start"><div class="grow" style="white-space:normal"><div style="font-weight:500">${r}</div><div class="faint" style="font-size:11.5px">${{ Admin: 'Manage members, settings, and all projects', Member: 'Create projects and work on tasks', Guest: 'Only sees projects they are invited to' }[r]}</div></div>${m.role === r ? `<span class="ck">${ic('check', 14)}</span>` : ''}</button>`,
+              `<button class="mi" data-a="popPick" data-v="${r}" style="height:auto;padding:7px 8px;align-items:flex-start"><div class="grow" style="white-space:normal"><div style="font-weight:500">${r}</div><div class="faint" style="font-size:11.5px">${{ Admin: 'Manage members, settings, and all projects', Member: 'Works on tasks in assigned projects only', Guest: 'Read/comment access on assigned projects only' }[r]}</div></div>${m.role === r ? `<span class="ck">${ic('check', 14)}</span>` : ''}</button>`,
           )
           .join('');
       style = 'width:300px';
@@ -222,7 +262,7 @@ export function popHtml(p) {
         )
         .join(
           '',
-        )}<div class="msep"></div><button class="mi" data-a="newWorkspace">${ic('plus', 15)}Create workspace</button><button class="mi" data-a="go" data-r="settings" data-sec="workspace">${ic('settings', 15)}Workspace settings</button><button class="mi" data-a="invite">${ic('user-plus', 15)}Invite members</button><div class="msep"></div><button class="mi" data-a="signOut">${ic('log-out', 15)}Sign out</button>`;
+        )}<div class="msep"></div>${isAdmin() ? `<button class="mi" data-a="newWorkspace">${ic('plus', 15)}Create workspace</button>` : ''}<button class="mi" data-a="go" data-r="settings" data-sec="workspace">${ic('settings', 15)}Workspace settings</button>${canInvite() ? `<button class="mi" data-a="invite">${ic('user-plus', 15)}Invite members</button>` : ''}<div class="msep"></div><button class="mi" data-a="signOut">${ic('log-out', 15)}Sign out</button>`;
       style = 'width:260px';
       break;
     case 'user':
@@ -363,11 +403,13 @@ export function popHtml(p) {
     case 'bulk-priority':
       inner = PRIOS.map(s => `<button class="mi" data-a="bulkSet" data-f="priority" data-v="${s.id}">${prIcon(s.id)}${s.name}</button>`).join('');
       break;
-    case 'bulk-assignee':
-      inner = [{ id: '', name: 'Unassigned' }, ...D().members]
+    case 'bulk-assignee': {
+      const pool = S.ui.route === 'project' && S.ui.params.id ? projectMembers(S.ui.params.id) : visibleMembers();
+      inner = [{ id: '', name: 'Unassigned' }, ...pool]
         .map(m => `<button class="mi" data-a="bulkSet" data-f="assignee" data-v="${m.id}">${av(m.id || null, 'sm', false)}${esc(m.name)}</button>`)
         .join('');
       break;
+    }
   }
   if (!inner) return '';
   return `<div class="pop floating ${cls} ${S.ui.fx.pop ? 'enter' : ''}" role="menu" style="left:${p.x}px;top:${p.y}px;${style}" data-pop-root>${inner}</div>`;

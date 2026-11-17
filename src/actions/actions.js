@@ -8,6 +8,7 @@ import {
   D,
   DEFAULT_PREFS,
   S,
+  TM,
   allTasks,
   applyServerState,
   canCreateProject,
@@ -251,9 +252,9 @@ A.goTasks = el => {
       ? [{ f: 'status', op: 'not', v: ['done'] }]
       : f === 'done'
         ? [
-            { f: 'status', op: 'is', v: ['done'] },
-            { f: 'updated', op: 'is', v: ['7'] },
-          ]
+          { f: 'status', op: 'is', v: ['done'] },
+          { f: 'updated', op: 'is', v: ['7'] },
+        ]
         : f === 'overdue'
           ? [{ f: 'due', op: 'is', v: ['overdue'] }]
           : [];
@@ -343,6 +344,21 @@ A.popPick = el => {
     S.ui.pop = null;
     render();
     toast(`${pr.name} marked ${PSTAT[v].name}`);
+    return;
+  }
+  if (p.type === 'pteam') {
+    const pr = proj(p.id);
+    if (!pr) return;
+    S.ui.pop = null;
+    if ((pr.team || '') === (v || '')) {
+      render();
+      return;
+    }
+    mutate(() => {
+      recordProjectTeamChange(pr, v);
+    });
+    render();
+    toast(`${pr.name} team set to ${TM[v].name}`);
     return;
   }
   if (p.type === 'role') {
@@ -839,7 +855,7 @@ A.previewFile = el => {
 export function handleFiles(files, ctx) {
   if (!files || !files.length) return;
   if (S.ui.offline) {
-    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => {} });
+    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => { } });
     return;
   }
   S.ui.uploads = S.ui.uploads || [];
@@ -1302,7 +1318,39 @@ export function makeKey(name) {
   while (D().projects.some(p => p.key === k)) k += 'X';
   return k;
 }
+export function recordProjectTeamChange(p, newTeamId) {
+  const prevId = p.team || '';
+  const nextId = newTeamId || '';
+  if (prevId === nextId) return false;
+  const fromName = TM[prevId].name;
+  const toName = TM[nextId].name;
+  const now = Date.now();
+  p.teamHistory = p.teamHistory || [];
+  p.teamHistory.unshift({
+    id: uid('th'),
+    fromTeam: prevId,
+    fromName,
+    toTeam: nextId,
+    toName,
+    by: D().me,
+    at: now,
+  });
+  p.team = nextId;
+  p.last = 0;
+  D().activity.unshift({
+    id: uid('a'),
+    by: D().me,
+    verb: 'changed team of project',
+    task: null,
+    project: p.id,
+    at: now,
+    extra: `from ${fromName} to ${toName}`,
+  });
+  return true;
+}
 export function createProject(f, tmplId) {
+  const now = Date.now();
+  const initTeam = f.team || '';
   const p = {
     id: uid('p'),
     key: makeKey(f.name),
@@ -1310,7 +1358,7 @@ export function createProject(f, tmplId) {
     icon: f.icon,
     color: f.color,
     status: 'planning',
-    team: f.team,
+    team: initTeam,
     lead: f.lead,
     due: f.due || dOff(30),
     start: dOff(0),
@@ -1318,11 +1366,24 @@ export function createProject(f, tmplId) {
     members: [...new Set([D().me, f.lead])],
     desc: f.desc || 'No description yet.',
     milestones: [],
+    teamHistory: initTeam
+      ? [
+        {
+          id: uid('th'),
+          fromTeam: '',
+          fromName: 'No team',
+          toTeam: initTeam,
+          toName: TM[initTeam].name,
+          by: D().me,
+          at: now,
+        },
+      ]
+      : [],
     last: 0,
   };
   D().projects.push(p);
   D().projOrder.unshift(p.id);
-  D().activity.unshift({ id: uid('a'), by: D().me, verb: 'created project', task: null, project: p.id, at: Date.now(), extra: '' });
+  D().activity.unshift({ id: uid('a'), by: D().me, verb: 'created project', task: null, project: p.id, at: now, extra: '' });
   const tm = TEMPLATES.find(t => t.id === tmplId);
   (tm?.tasks || []).forEach((title, i) =>
     createTask({
@@ -1342,6 +1403,9 @@ A.submitProject = () => {
   const f = S.ui.pform;
   f.name = ($('#p-name')?.value || '').trim();
   f.desc = $('#p-desc')?.value || '';
+  if ($('#p-team')) f.team = $('#p-team').value;
+  if ($('#p-lead')) f.lead = $('#p-lead').value;
+  if ($('#p-due')) f.due = $('#p-due').value;
   if (!f.name) {
     S.ui.errors.pname = 'Give the project a name';
     render();
@@ -1351,18 +1415,21 @@ A.submitProject = () => {
   if (m.edit) {
     const p = proj(m.edit);
     if (
-      mutate(() =>
+      mutate(() => {
+        if ((p.team || '') !== (f.team || '')) {
+          recordProjectTeamChange(p, f.team);
+        }
         Object.assign(p, {
           name: f.name,
           desc: f.desc,
           icon: f.icon,
           color: f.color,
-          team: f.team,
+          team: f.team || '',
           lead: f.lead,
           due: f.due,
           members: [...new Set([...p.members, f.lead])],
-        }),
-      )
+        });
+      })
     ) {
       S.ui.modals.pop();
       render();
@@ -1382,6 +1449,10 @@ A.submitProject = () => {
   toast(`Created ${p.name}${tasksOf(p.id).length ? ` with ${tasksOf(p.id).length} starter tasks` : ''}`);
 };
 A.dupProject = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can create or duplicate projects', { kind: 'err' });
+    return;
+  }
   const p = proj(el.dataset.id);
   S.ui.pop = null;
   let n;
@@ -1392,6 +1463,10 @@ A.dupProject = el => {
   toast(`Duplicated ${p.name}`, { action: 'Open', onAction: () => go('project', { id: n.id }) });
 };
 A.archiveProject = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can archive projects', { kind: 'err' });
+    return;
+  }
   const p = proj(el.dataset.id);
   S.ui.pop = null;
   confirmDlg({
@@ -1414,6 +1489,10 @@ A.archiveProject = el => {
   });
 };
 A.restoreProject = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can restore projects', { kind: 'err' });
+    return;
+  }
   const p = proj(el.dataset.id);
   mutate(() => {
     p.archived = false;
@@ -1422,6 +1501,10 @@ A.restoreProject = el => {
   toast(`Restored ${p.name}`);
 };
 A.delProject = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can delete projects', { kind: 'err' });
+    return;
+  }
   const p = proj(el.dataset.id);
   S.ui.pop = null;
   const n = tasksOf(p.id).length;
@@ -1468,25 +1551,41 @@ IN.shareQ = el => {
   render();
 };
 A.shareAdd = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can add members to a project', { kind: 'err' });
+    return;
+  }
   const p = proj(el.dataset.id);
   const m = mem(el.dataset.mid);
+  const perm = $('#share-perm')?.value || 'Can edit';
   mutate(() => {
-    p.members.push(m.id);
+    if (!p.members.includes(m.id)) p.members.push(m.id);
+    p.perms = p.perms || {};
+    p.perms[m.id] = perm;
   });
+  fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add: [{ id: m.id, perm }] }),
+  }).catch(() => {});
   S.ui.shareQ = '';
   render();
-  toast(`${m.name} can now edit ${p.name}`);
+  toast(`${m.name} now has access to ${p.name}`);
 };
 A.shareInvite = () => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can add or invite members to a project', { kind: 'err' });
+    return;
+  }
   const m = S.ui.modals[S.ui.modals.length - 1];
   const p = proj(m.id);
   const v = ($('#share-in')?.value || '').trim();
-  const perm = $('#share-perm')?.value;
+  const perm = $('#share-perm')?.value || 'Can edit';
   if (!v) {
     $('#share-in')?.focus();
     return;
   }
-  const ex = D().members.find(x => x.email.toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
+  const ex = D().members.find(x => (x.email || '').toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
   if (ex) {
     if (!p.members.includes(ex.id))
       mutate(() => {
@@ -1494,6 +1593,11 @@ A.shareInvite = () => {
         p.perms = p.perms || {};
         p.perms[ex.id] = perm;
       });
+    fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add: [{ id: ex.id, perm }] }),
+    }).catch(() => {});
     S.ui.shareQ = '';
     render();
     toast(`Shared with ${ex.name}`);
@@ -1519,27 +1623,99 @@ A.shareInvite = () => {
   toast(`Invitation sent to ${v}`);
 };
 IN.sharePerm = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can change project permissions', { kind: 'err' });
+    render();
+    return;
+  }
   const p = proj(el.dataset.id);
   const mid = el.dataset.mid;
   if (el.value === '__remove') {
     const snap = snapshot();
     mutate(() => {
       p.members = p.members.filter(x => x !== mid);
+      D().tasks.forEach(t => {
+        if (t.project === p.id && t.assignee === mid && t.status !== 'done') t.assignee = null;
+      });
     });
-    toast(`Removed ${mem(mid).name}`, { action: 'Undo', onAction: () => restore(snap) });
+    fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remove: [mid] }),
+    }).catch(() => {});
+    toast(`Removed ${mem(mid)?.name || 'member'}`, { action: 'Undo', onAction: () => restore(snap) });
   } else {
     mutate(() => {
       p.perms = p.perms || {};
       p.perms[mid] = el.value;
     });
-    toast(`${mem(mid).name}: ${el.value}`, { ms: 1800 });
+    fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add: [{ id: mid, perm: el.value }] }),
+    }).catch(() => {});
+    toast(`${mem(mid)?.name || 'Member'}: ${el.value}`, { ms: 1800 });
   }
 };
 IN.shareAccess = el => {
+  if (!isAdmin()) return;
   const p = proj(el.dataset.id);
   mutate(() => {
     p.access = el.value;
   });
+};
+A.toggleMemberProj = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can assign members to projects', { kind: 'err' });
+    render();
+    return;
+  }
+  const mid = el.dataset.mid;
+  const pid = el.dataset.pid;
+  const p = proj(pid);
+  const m = mem(mid);
+  if (!p || !m || p.lead === mid) return;
+  const adding = !p.members.includes(mid);
+  const defaultPerm = m.role === 'Guest' ? 'Can view' : 'Can edit';
+  mutate(() => {
+    if (adding) {
+      p.members.push(mid);
+      p.perms = p.perms || {};
+      p.perms[mid] = p.perms[mid] || defaultPerm;
+    } else {
+      p.members = p.members.filter(x => x !== mid);
+      D().tasks.forEach(t => {
+        if (t.project === p.id && t.assignee === mid && t.status !== 'done') t.assignee = null;
+      });
+    }
+  });
+  fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(adding ? { add: [{ id: mid, perm: defaultPerm }] } : { remove: [mid] }),
+  }).catch(() => {});
+  render();
+  toast(adding ? `Assigned ${m.name} to ${p.name}` : `Removed ${m.name} from ${p.name}`);
+};
+IN.memberProjPerm = el => {
+  if (!isAdmin()) return;
+  const mid = el.dataset.mid;
+  const pid = el.dataset.pid;
+  const p = proj(pid);
+  const m = mem(mid);
+  if (!p || !m) return;
+  const val = el.value;
+  mutate(() => {
+    p.perms = p.perms || {};
+    p.perms[mid] = val;
+  });
+  fetch(`/api/admin/projects/${encodeURIComponent(p.id)}/members`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add: [{ id: mid, perm: val }] }),
+  }).catch(() => {});
+  render();
+  toast(`${m.name} on ${p.name}: ${val}`, { ms: 1800 });
 };
 A.invite = () => {
   if (!canInvite()) {
@@ -1611,6 +1787,30 @@ A.viewProfile = el => go('member', { id: el.dataset.id });
 A.assignToMember = el => {
   S.ui.pop = null;
   A.newTask({ dataset: { assignee: el.dataset.id } });
+};
+A.toggleMemberStatus = el => {
+  if (!isAdmin()) {
+    toast('Only workspace owners and admins can confirm or deactivate members', { kind: 'err' });
+    return;
+  }
+  const m = mem(el.dataset.id);
+  if (!m || m.role === 'Owner' || m.id === D().me) return;
+  S.ui.pop = null;
+  const activating = m.status === 'deactivated' || m.status === 'invited';
+  mutate(() => {
+    m.status = activating ? 'active' : 'deactivated';
+    D().activity.unshift({
+      id: uid('a'),
+      by: D().me,
+      verb: activating ? 'confirmed and activated' : 'deactivated',
+      task: null,
+      project: null,
+      at: Date.now(),
+      extra: m.name,
+    });
+  });
+  render();
+  toast(activating ? `Confirmed and activated ${m.name}` : `Deactivated ${m.name}`);
 };
 A.removeMember = el => {
   if (!isAdmin()) {
@@ -1944,7 +2144,7 @@ A.promptSubmit = () => {
   render();
   m.run(v);
 };
-IN.noop = () => {};
+IN.noop = () => { };
 
 /* settings */
 IN.prefToggle = el => {
@@ -2327,6 +2527,13 @@ A.doSignup = async () => {
     if (!res.ok || !j.ok) {
       e[j.field || 'email'] = j.error || 'Could not create account';
       render();
+      return;
+    }
+    if (j.pendingApproval) {
+      S.ui.pwNew = '';
+      S.ui.auth = 'pending-approval';
+      render();
+      toast('Account registered — waiting for admin confirmation');
       return;
     }
     if (j.state) applyServerState(j.state);

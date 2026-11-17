@@ -3,7 +3,7 @@
    ===================================================================== */
 import { dOff, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
-import { D, S, canInvite, isAdmin, isOwner, me } from '../core/store.js';
+import { D, S, canInvite, isAdmin, isOwner, me, visibleMembers } from '../core/store.js';
 import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
@@ -68,9 +68,14 @@ export const sel = (k, opts, v) =>
     .join('')}</select>`;
 export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
-  const title = SET_NAV.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
+  const admin = isAdmin();
+  const navGroups = SET_NAV.map(([g, items]) => [
+    g,
+    items.filter(([k]) => admin || (k !== 'teams' && k !== 'permissions')),
+  ]).filter(([, items]) => items.length);
+  const title = navGroups.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
   return `<div class="set">
-    <nav class="set-nav" aria-label="Settings">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
+    <nav class="set-nav" aria-label="Settings">${navGroups.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
     <div class="set-body" data-keep="set:${sec}"><div class="set-in">${settingsBody(sec, title[1])}</div></div>
   </div>`;
 }
@@ -200,13 +205,16 @@ export function settingsBody(sec, title) {
           ),
         )
       );
-    case 'members':
+    case 'members': {
+      const pool = isAdmin() ? d.members : visibleMembers();
       return (
-        H(`${d.members.length} people have access to ${esc(d.ws.name)}.`) +
+        H(`${pool.length} ${isAdmin() ? `people have access to ${esc(d.ws.name)}` : 'people in your projects'}.`) +
         `<div class="row" style="margin-bottom:12px">${canInvite() ? `<button class="btn btn-primary" data-a="invite">${ic('user-plus', 14)}Invite member</button>` : ''}<button class="btn btn-secondary" data-a="go" data-r="members">Open member directory</button></div>
-      <div class="panel" style="overflow:hidden">${d.members.map(m => `<div class="mini" style="min-height:52px;cursor:default" data-ctx="member" data-id="${m.id}">${av(m.id, 'md', false)}<div class="grow"><div style="font-weight:500">${esc(m.name)}</div><div class="faint" style="font-size:12px">${esc(m.email)}</div></div>${m.status === 'invited' ? '<span class="badge amber">Invited</span>' : ''}${isAdmin() && m.role !== 'Owner' ? `<button class="pillbtn bordered" data-a="pop" data-pop="role" data-id="${m.id}">${m.role}${ic('chevron-down', 12)}</button>` : `<span class="pillbtn">${m.role === 'Owner' ? ic('crown', 13) : ''}${m.role}</span>`}<button class="ibtn ibtn-sm" data-a="ctxBtn" data-ctx="member" data-id="${m.id}" aria-label="Options">${ic('ellipsis', 14)}</button></div>`).join('')}</div>`
+      <div class="panel" style="overflow:hidden">${pool.map(m => `<div class="mini" style="min-height:52px;cursor:default" data-ctx="member" data-id="${m.id}">${av(m.id, 'md', false)}<div class="grow"><div style="font-weight:500">${esc(m.name)}</div><div class="faint" style="font-size:12px">${esc(m.email || m.title || m.role)}</div></div>${m.status === 'invited' ? '<span class="badge amber">Invited</span>' : m.status === 'deactivated' ? '<span class="badge gray">Deactive</span>' : ''}${isAdmin() && m.status === 'deactivated' && m.role !== 'Owner' ? `<button class="btn btn-primary btn-sm" data-a="toggleMemberStatus" data-id="${m.id}">${ic('user-check', 13)}Confirm</button>` : ''}${isAdmin() && m.role !== 'Owner' ? `<button class="pillbtn bordered" data-a="pop" data-pop="role" data-id="${m.id}">${m.role}${ic('chevron-down', 12)}</button>` : `<span class="pillbtn">${m.role === 'Owner' ? ic('crown', 13) : ''}${m.role}</span>`}<button class="ibtn ibtn-sm" data-a="ctxBtn" data-ctx="member" data-id="${m.id}" aria-label="Options">${ic('ellipsis', 14)}</button></div>`).join('')}</div>`
       );
+    }
     case 'teams':
+      if (!isAdmin()) return page404();
       return H('Teams group people and projects.') + teamsGrid();
     case 'projects': {
       const arch = d.projects.filter(p => p.archived);
@@ -231,14 +239,26 @@ export function settingsBody(sec, title) {
         `<div class="sblock"><h2>Archived projects</h2>${arch.length ? arch.map(p => `<div class="srow"><div class="row">${pIcon(p, '', 14)}<b style="font-weight:500">${esc(p.name)}</b></div><div class="row"><button class="btn btn-secondary btn-sm" data-a="restoreProject" data-id="${p.id}">Restore</button><button class="btn btn-danger-ghost btn-sm" data-a="delProject" data-id="${p.id}">Delete</button></div></div>`).join('') : `<p class="faint" style="padding:12px 0">No archived projects. Archived projects are hidden from the sidebar but keep all their tasks.</p>`}<div style="margin-top:12px"><button class="btn btn-secondary btn-sm" data-a="go" data-r="archive">${ic('archive', 13)}Open archive</button></div></div>`
       );
     }
-    case 'permissions':
+    case 'permissions': {
+      if (!isAdmin()) return page404();
+      const nonAdmins = d.members.filter(m => !['Owner', 'Admin'].includes(m.role));
       return (
-        H('Control what each role can do.') +
-        srow('Members can create projects', '', tog('permCreate', P.permCreate !== false)) +
-        srow('Members can invite guests', 'Guests only see projects they are added to.', tog('permGuests', P.permGuests !== false)) +
-        srow('Allow public share links', 'Anyone with the link can view a project.', tog('permPublic', !!P.permPublic)) +
-        `<div class="sblock"><h2>Role permissions</h2><div style="margin-top:12px">${permsTable()}</div></div>`
+        H('Project-scoped isolation and role permissions.') +
+        `<div class="alert info" style="margin-bottom:16px">${ic('lock', 15)}<div><b>Strict project isolation is active.</b><div class="muted">Non-admin users can only see and access projects they are explicitly assigned to, and can only see co-members who share a project with them.</div></div></div>` +
+        `<div class="sblock" style="margin-top:0"><h2>Role permissions</h2><div style="margin-top:12px">${permsTable()}</div></div>` +
+        `<div class="sblock"><h2>Member project isolation report</h2><p class="muted" style="font-size:13px;margin:4px 0 12px">Review which projects each member can access and which projects are isolated from them.</p><div class="panel" style="overflow-x:auto"><table class="perm-t" style="min-width:640px"><thead><tr><th style="padding-left:14px">Member</th><th style="text-align:left">Role</th><th style="text-align:left">Assigned projects</th><th style="text-align:left">Isolated from</th><th></th></tr></thead><tbody>${
+          nonAdmins.length
+            ? nonAdmins
+                .map(m => {
+                  const assigned = d.projects.filter(p => !p.archived && (p.members.includes(m.id) || p.lead === m.id));
+                  const isolated = d.projects.filter(p => !p.archived && !p.members.includes(m.id) && p.lead !== m.id);
+                  return `<tr><td style="padding-left:14px"><button class="row" data-a="go" data-r="member" data-id="${m.id}" style="gap:8px;text-align:left">${av(m.id, 'sm', false)}<span style="font-weight:500">${esc(m.name)}</span></button></td><td style="text-align:left"><span class="badge">${m.role}</span></td><td style="text-align:left">${assigned.length ? assigned.map(p => `<span class="badge green" style="margin:2px">${esc(p.name)}</span>`).join('') : '<span class="badge amber">No projects assigned</span>'}</td><td style="text-align:left">${isolated.length ? `<span class="faint" style="font-size:12px">${isolated.length} project${isolated.length > 1 ? 's' : ''} hidden</span>` : '<span class="faint" style="font-size:12px">None</span>'}</td><td style="text-align:right;padding-right:12px"><button class="btn btn-secondary btn-sm" data-a="go" data-r="member" data-id="${m.id}">Manage access</button></td></tr>`;
+                })
+                .join('')
+            : `<tr><td colspan="5" class="faint" style="padding:16px;text-align:center">No non-admin members in workspace.</td></tr>`
+        }</tbody></table></div></div>`
       );
+    }
     case 'notif-email':
       return (
         H('Choose which emails you receive.') +

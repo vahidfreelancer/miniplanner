@@ -3,11 +3,11 @@
    ===================================================================== */
 import { $, uid } from '../core/utils.js';
 import { PCOLORS } from '../core/constants.js';
-import { D, S, isAdmin, mem, team, teamsList } from '../core/store.js';
+import { D, S, isAdmin, mem, proj, team, teamsList } from '../core/store.js';
 import { mutate, toast } from '../ui/toast.js';
 import { go, render } from '../shell/render.js';
 import { openModal } from '../overlays/modals.js';
-import { A, IN, confirmDlg, restore, snapshot } from './actions.js';
+import { A, IN, confirmDlg, recordProjectTeamChange, restore, snapshot } from './actions.js';
 
 A.newTeam = () => {
   if (!isAdmin()) {
@@ -16,7 +16,7 @@ A.newTeam = () => {
   }
   S.ui.pop = null;
   S.ui.errors = {};
-  S.ui.tform = { name: '', desc: '', icon: 'users', color: 'teal', members: [] };
+  S.ui.tform = { name: '', desc: '', icon: 'users', color: 'teal', members: [], projects: [] };
   openModal({ type: 'team' });
 };
 A.editTeam = el => {
@@ -36,6 +36,9 @@ A.editTeam = el => {
     members: D()
       .members.filter(m => m.team === t.id)
       .map(m => m.id),
+    projects: D()
+      .projects.filter(p => p.team === t.id && !p.archived)
+      .map(p => p.id),
   };
   openModal({ type: 'team', edit: t.id });
 };
@@ -54,6 +57,12 @@ A.tformMember = el => {
   const l = S.ui.tform.members;
   const id = el.dataset.id;
   S.ui.tform.members = l.includes(id) ? l.filter(x => x !== id) : [...l, id];
+  render();
+};
+A.tformProject = el => {
+  const l = S.ui.tform.projects || [];
+  const id = el.dataset.id;
+  S.ui.tform.projects = l.includes(id) ? l.filter(x => x !== id) : [...l, id];
   render();
 };
 A.submitTeam = () => {
@@ -75,11 +84,17 @@ A.submitTeam = () => {
   }
   let t;
   const ok = mutate(() => {
+    const selProjs = f.projects || [];
     if (m.edit) {
       t = team(m.edit);
       Object.assign(t, { name: f.name, desc: f.desc, icon: f.icon, c: PCOLORS[f.color] });
       D().members.forEach(x => {
         if (x.team === t.id && !f.members.includes(x.id)) x.team = '';
+      });
+      D().projects.forEach(p => {
+        if (p.team === t.id && !selProjs.includes(p.id)) {
+          recordProjectTeamChange(p, '');
+        }
       });
     } else {
       t = { id: uid('tm'), name: f.name, desc: f.desc || 'No description yet.', icon: f.icon, c: PCOLORS[f.color] };
@@ -88,6 +103,10 @@ A.submitTeam = () => {
     f.members.forEach(id => {
       const x = mem(id);
       if (x) x.team = t.id;
+    });
+    selProjs.forEach(pid => {
+      const p = proj(pid);
+      if (p) recordProjectTeamChange(p, t.id);
     });
   });
   if (!ok) return;
@@ -119,12 +138,12 @@ A.delTeam = el => {
       const snap = snapshot();
       if (
         mutate(() => {
+          D().projects.forEach(p => {
+            if (p.team === t.id) recordProjectTeamChange(p, '');
+          });
           D().teams = teamsList().filter(x => x !== t);
           D().members.forEach(x => {
             if (x.team === t.id) x.team = '';
-          });
-          D().projects.forEach(p => {
-            if (p.team === t.id) p.team = '';
           });
         })
       ) {

@@ -1,8 +1,8 @@
 /* ---------- OVERVIEW ---------- */
-import { TODAY, dayBucket, diffD, esc, fmtDate, parse } from '../core/utils.js';
+import { TODAY, ago, dayBucket, diffD, esc, fmtDate, parse } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { STATUSES } from '../core/constants.js';
-import { D, TM, isOver, mem, pColor, progressOf, task, tasksOf } from '../core/store.js';
+import { D, TM, canEditTask, isAdmin, isOver, mem, pColor, progressOf, task, tasksOf, team } from '../core/store.js';
 import { av, avStack, empty, pStatus, stIcon } from '../ui/helpers.js';
 import { sortTasks } from '../shell/view-engine.js';
 import { actHtml, miniRow } from '../components/task-list.js';
@@ -19,11 +19,12 @@ export function projOverview(p) {
   const acts = D()
     .activity.filter(a => a.project === p.id)
     .slice(0, 6);
+  const teamHist = p.teamHistory || [];
   const daysLeft = diffD(parse(p.due), TODAY);
   return `<div class="page" style="max-width:1160px;padding-top:22px">
     <div class="grid2">
       <div class="stack">
-        <section class="panel"><div class="panel-h"><h2>About</h2><div class="acts"><button class="btn btn-sm btn-ghost" data-a="editProject" data-id="${p.id}">${ic('pencil', 13)}Edit</button></div></div><div class="panel-b" style="font-size:14px;line-height:1.6;color:var(--text)">${esc(p.desc)}</div></section>
+        <section class="panel"><div class="panel-h"><h2>About</h2><div class="acts">${canEditTask(p) ? `<button class="btn btn-sm btn-ghost" data-a="editProject" data-id="${p.id}">${ic('pencil', 13)}Edit</button>` : ''}</div></div><div class="panel-b" style="font-size:14px;line-height:1.6;color:var(--text)">${esc(p.desc)}</div></section>
         <section class="panel"><div class="panel-h"><h2>Progress</h2><div class="acts"><span class="faint" style="font-size:12px">${ts.filter(t => t.status === 'done').length} of ${ts.length} tasks done</span></div></div>
           <div class="panel-b">
             <div class="row" style="align-items:baseline;gap:10px;margin-bottom:10px"><span style="font-size:30px;font-weight:600;letter-spacing:-.03em" class="num">${pr}%</span><span class="muted">${daysLeft >= 0 ? `${daysLeft} days until ${fmtDate(p.due)}` : `Ended ${fmtDate(p.due)}`}</span>${over.length ? `<span class="badge red">${ic('clock-alert', 11)}${over.length} overdue</span>` : ''}</div>
@@ -36,11 +37,26 @@ export function projOverview(p) {
         <section class="panel"><div class="panel-h"><h2>Details</h2></div><div class="panel-b"><dl class="kv">
           <dt>${ic('circle-dot', 14)}Status</dt><dd><button class="pillbtn" data-a="pop" data-pop="pstatus" data-id="${p.id}">${pStatus(p.status)}</button></dd>
           <dt>${ic('user', 14)}Lead</dt><dd><span class="pillbtn">${av(p.lead, 'sm', false)}${esc(mem(p.lead)?.name)}</span></dd>
-          <dt>${ic('users', 14)}Team</dt><dd><button class="pillbtn" data-a="go" data-r="team" data-id="${p.team}">${ic(TM[p.team].icon, 13)}${TM[p.team].name}</button></dd>
+          ${isAdmin() ? `<dt>${ic('users', 14)}Team</dt><dd><div class="row" style="gap:4px"><button class="pillbtn" data-a="pop" data-pop="pteam" data-id="${p.id}" aria-label="Change team">${ic(TM[p.team].icon, 13)}${esc(TM[p.team].name)}${ic('chevron-down', 12)}</button>${p.team && team(p.team) ? `<button class="ibtn ibtn-xs" data-a="go" data-r="team" data-id="${p.team}" data-tip="Open ${esc(TM[p.team].name)}" aria-label="Open team">${ic('arrow-up-right', 13)}</button>` : ''}</div></dd>` : ''}
           <dt>${ic('calendar', 14)}Start</dt><dd><span class="pillbtn num">${fmtDate(p.start, true)}</span></dd>
           <dt>${ic('flag', 14)}Due</dt><dd><span class="pillbtn num">${fmtDate(p.due, true)}</span></dd>
           <dt>${ic('user-plus', 14)}Members</dt><dd><button class="pillbtn" data-a="share" data-id="${p.id}">${avStack(p.members, 6)}<span class="faint">${p.members.length}</span></button></dd>
         </dl></div></section>
+        ${
+          isAdmin()
+            ? `<section class="panel"><div class="panel-h"><h2>Team history</h2><span class="faint" style="font-size:12px">${teamHist.length}</span></div><div class="panel-b">${
+                teamHist.length
+                  ? `<div class="col" style="gap:8px">${teamHist
+                      .slice(0, 6)
+                      .map(
+                        th =>
+                          `<div class="row" style="gap:8px;font-size:12.5px">${av(th.by, 'sm', false)}<div class="grow trunc"><span class="muted">${esc(th.fromName || 'No team')}</span> ${ic('arrow-right', 11)} <b>${esc(th.toName || 'No team')}</b></div><span class="faint num" style="font-size:11.5px;flex-shrink:0">${ago(th.at)}</span></div>`,
+                      )
+                      .join('')}</div>`
+                  : '<span class="faint">No team changes recorded yet</span>'
+              }</div></section>`
+            : ''
+        }
         <section class="panel"><div class="panel-h"><h2>Milestones</h2></div><div class="panel-b">${
           (p.milestones || [])
             .map(m => {

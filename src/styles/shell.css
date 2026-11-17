@@ -53,9 +53,9 @@
   flex-shrink: 0;
 }
 .ws-logo.brand {
-  background: #000;
+  background: transparent;
   overflow: hidden;
-  border-radius: 28%;
+  border-radius: 23%;
 }
 .ws-logo.brand svg {
   display: block;

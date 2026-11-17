@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="mpgM" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="96" height="96" rx="22" fill="url(#mpgM)"/>
+  <text x="14" y="66" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="52" font-weight="700" fill="#FFFFFF" letter-spacing="-2">mp</text>
+  <circle cx="72" cy="70" r="13" fill="#FFFFFF"/>
+  <path d="M66 70 l4.5 4.5 l8 -9" fill="none" stroke="#0E7490" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

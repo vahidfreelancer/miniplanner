@@ -3,6 +3,9 @@ import {
   DB_PATH,
   changeUserPassword,
   disableUser2fa,
+  getAdminIsolationReport,
+  getAdminMemberProjects,
+  getAdminProjectMembers,
   getAuthStatus,
   getTransactions,
   loadState,
@@ -13,6 +16,8 @@ import {
   saveState,
   setupUser2fa,
   signupUser,
+  updateAdminMemberProjects,
+  updateAdminProjectMembers,
   verifyAndEnableUser2fa,
 } from './db.js';
 
@@ -90,11 +95,22 @@ export function apiMiddleware() {
           return true;
         }
 
+        if (result.pendingApproval) {
+          sendJson(res, result.status || 201, {
+            ok: true,
+            pendingApproval: true,
+            isFirstOwner: false,
+            member: result.member,
+          });
+          return true;
+        }
+
         sendJson(
           res,
           result.status || 201,
           {
             ok: true,
+            pendingApproval: false,
             isFirstOwner: result.isFirstOwner,
             member: result.member,
             state: result.state,
@@ -147,7 +163,7 @@ export function apiMiddleware() {
 
       if (req.method === 'POST' && url === '/api/auth/password') {
         const auth = getAuthStatus(token);
-        if (!auth.authenticated && !auth.setupRequired) {
+        if (!auth.authenticated) {
           sendJson(res, 401, { ok: false, error: 'Authentication required' });
           return true;
         }
@@ -162,7 +178,7 @@ export function apiMiddleware() {
 
       if (req.method === 'DELETE' && url === '/api/auth/sessions') {
         const auth = getAuthStatus(token);
-        if (!auth.authenticated && !auth.setupRequired) {
+        if (!auth.authenticated) {
           sendJson(res, 401, { ok: false, error: 'Authentication required' });
           return true;
         }
@@ -177,7 +193,7 @@ export function apiMiddleware() {
 
       if (req.method === 'POST' && url === '/api/auth/2fa/setup') {
         const auth = getAuthStatus(token);
-        if (!auth.authenticated && !auth.setupRequired) {
+        if (!auth.authenticated) {
           sendJson(res, 401, { ok: false, error: 'Authentication required' });
           return true;
         }
@@ -188,7 +204,7 @@ export function apiMiddleware() {
 
       if (req.method === 'POST' && url === '/api/auth/2fa/verify') {
         const auth = getAuthStatus(token);
-        if (!auth.authenticated && !auth.setupRequired) {
+        if (!auth.authenticated) {
           sendJson(res, 401, { ok: false, error: 'Authentication required' });
           return true;
         }
@@ -200,7 +216,7 @@ export function apiMiddleware() {
 
       if (req.method === 'DELETE' && url === '/api/auth/2fa') {
         const auth = getAuthStatus(token);
-        if (!auth.authenticated && !auth.setupRequired) {
+        if (!auth.authenticated) {
           sendJson(res, 401, { ok: false, error: 'Authentication required' });
           return true;
         }
@@ -213,8 +229,8 @@ export function apiMiddleware() {
          STATE, RESET & TRANSACTIONS ENDPOINTS
          ========================================================= */
       const auth = getAuthStatus(token);
-      if (!auth.authenticated && !auth.setupRequired) {
-        sendJson(res, 401, { error: 'Authentication required', setupRequired: false });
+      if (!auth.authenticated) {
+        sendJson(res, 401, { error: 'Authentication required', setupRequired: Boolean(auth.setupRequired) });
         return true;
       }
 
@@ -250,6 +266,47 @@ export function apiMiddleware() {
         }
         sendJson(res, 200, { dbPath: DB_PATH, transactions: getTransactions(100) });
         return true;
+      }
+
+      /* =========================================================
+         ADMIN PROJECT MEMBERSHIP & ISOLATION ENDPOINTS
+         ========================================================= */
+      if (req.method === 'GET' && url === '/api/admin/isolation-report') {
+        const result = getAdminIsolationReport(memberId);
+        sendJson(res, result.status || 200, result);
+        return true;
+      }
+
+      const projMemMatch = url.match(/^\/api\/admin\/projects\/([^/]+)\/members$/);
+      if (projMemMatch) {
+        const pid = decodeURIComponent(projMemMatch[1]);
+        if (req.method === 'GET') {
+          const result = getAdminProjectMembers(memberId, pid);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+        if (req.method === 'PUT' || req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = updateAdminProjectMembers(memberId, pid, body);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+      }
+
+      const memProjMatch = url.match(/^\/api\/admin\/members\/([^/]+)\/projects$/);
+      if (memProjMatch) {
+        const targetMid = decodeURIComponent(memProjMatch[1]);
+        if (req.method === 'GET') {
+          const result = getAdminMemberProjects(memberId, targetMid);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+        if (req.method === 'PUT' || req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = updateAdminMemberProjects(memberId, targetMid, body);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
       }
 
       sendJson(res, 404, { error: 'Not found' });
