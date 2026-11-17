@@ -252,9 +252,9 @@ A.goTasks = el => {
       ? [{ f: 'status', op: 'not', v: ['done'] }]
       : f === 'done'
         ? [
-          { f: 'status', op: 'is', v: ['done'] },
-          { f: 'updated', op: 'is', v: ['7'] },
-        ]
+            { f: 'status', op: 'is', v: ['done'] },
+            { f: 'updated', op: 'is', v: ['7'] },
+          ]
         : f === 'overdue'
           ? [{ f: 'due', op: 'is', v: ['overdue'] }]
           : [];
@@ -855,7 +855,7 @@ A.previewFile = el => {
 export function handleFiles(files, ctx) {
   if (!files || !files.length) return;
   if (S.ui.offline) {
-    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => { } });
+    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => {} });
     return;
   }
   S.ui.uploads = S.ui.uploads || [];
@@ -1368,16 +1368,16 @@ export function createProject(f, tmplId) {
     milestones: [],
     teamHistory: initTeam
       ? [
-        {
-          id: uid('th'),
-          fromTeam: '',
-          fromName: 'No team',
-          toTeam: initTeam,
-          toName: TM[initTeam].name,
-          by: D().me,
-          at: now,
-        },
-      ]
+          {
+            id: uid('th'),
+            fromTeam: '',
+            fromName: 'No team',
+            toTeam: initTeam,
+            toName: TM[initTeam].name,
+            by: D().me,
+            at: now,
+          },
+        ]
       : [],
     last: 0,
   };
@@ -2144,7 +2144,7 @@ A.promptSubmit = () => {
   render();
   m.run(v);
 };
-IN.noop = () => { };
+IN.noop = () => {};
 
 /* settings */
 IN.prefToggle = el => {

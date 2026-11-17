@@ -2,7 +2,7 @@
 import { ago, esc, minsAgo } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { ROLES } from '../core/constants.js';
-import { D, S, TM, allTasks, canInvite, canSee, isAdmin, isOver, me, mem, progressOf, team, teamsList, visibleMembers, visibleProjects } from '../core/store.js';
+import { D, S, TM, allTasks, canInvite, canSee, isAdmin, isOver, mem, progressOf, team, teamsList, visibleMembers, visibleProjects } from '../core/store.js';
 import { av, avStack, empty, pIcon, pStatus, progBar } from '../ui/helpers.js';
 import { sortTasks } from '../shell/view-engine.js';
 import { actHtml, miniRow } from '../components/task-list.js';
@@ -18,11 +18,7 @@ export function pageMembers() {
   const ms = pool.filter(m => (role === 'all' || m.role === role) && (!q || m.name.toLowerCase().includes(q) || (m.email || '').toLowerCase().includes(q)));
   const pendingCount = pool.filter(m => m.status === 'invited' || m.status === 'deactivated').length;
   const tab = !admin && u.membersTab === 'teams' ? 'members' : u.membersTab;
-  const tabList = [
-    ['members', 'Members'],
-    ...(admin ? [['teams', 'Teams']] : []),
-    ['roles', 'Roles & permissions'],
-  ];
+  const tabList = [['members', 'Members'], ...(admin ? [['teams', 'Teams']] : []), ['roles', 'Roles & permissions']];
   return `<div class="page wide" style="max-width:1200px">
     <div class="ph"><div><h1>Members</h1><p>${pool.length} ${admin ? `people in ${esc(D().ws.name)} · ${pendingCount} pending / deactive` : 'people in your projects'}</p></div><div class="acts">${canInvite() ? `<button class="btn btn-primary" data-a="invite">${ic('user-plus', 14)}Invite member</button>` : ''}</div></div>
     <div class="tabs" style="margin-bottom:14px">${tabList

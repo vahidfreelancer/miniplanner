@@ -39,9 +39,7 @@ export function drawerHtml(t) {
   const ment =
     u.mention && u.mention.tid === t.id
       ? projectMembers(t.project)
-          .filter(
-            m => m.name.toLowerCase().startsWith(u.mention.q.toLowerCase()) || m.name.split(' ')[1]?.toLowerCase().startsWith(u.mention.q.toLowerCase()),
-          )
+          .filter(m => m.name.toLowerCase().startsWith(u.mention.q.toLowerCase()) || m.name.split(' ')[1]?.toLowerCase().startsWith(u.mention.q.toLowerCase()))
           .slice(0, 5)
       : [];
   const sub = u.subOpen && u.subOpen.tid === t.id ? t.subtasks.find(s => s.id === u.subOpen.sid) : null;

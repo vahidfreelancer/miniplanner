@@ -2,15 +2,23 @@ import { clearSessionCookie, parseDevice, parseSessionToken, serializeSessionCoo
 import {
   DB_PATH,
   changeUserPassword,
+  createCommentResource,
+  createProjectResource,
+  createTaskResource,
+  deleteProjectResource,
+  deleteTaskResource,
   disableUser2fa,
   getAdminIsolationReport,
   getAdminMemberProjects,
   getAdminProjectMembers,
   getAuthStatus,
+  getProjectResource,
   getTransactions,
   loadState,
   loginUser,
   logoutSession,
+  patchProjectResource,
+  patchTaskResource,
   resetState,
   revokeUserSessions,
   saveState,
@@ -307,6 +315,69 @@ export function apiMiddleware() {
           sendJson(res, result.status || 200, result);
           return true;
         }
+      }
+
+      /* =========================================================
+         GRANULAR RESOURCE ENDPOINTS (/api/projects, /api/tasks)
+         ========================================================= */
+      if (req.method === 'POST' && url === '/api/projects') {
+        const body = await readJsonBody(req);
+        const result = createProjectResource(memberId, body);
+        sendJson(res, result.status || 201, result);
+        return true;
+      }
+
+      const projItemMatch = url.match(/^\/api\/projects\/([^/]+)$/);
+      if (projItemMatch) {
+        const pid = decodeURIComponent(projItemMatch[1]);
+        if (req.method === 'GET') {
+          const result = getProjectResource(memberId, pid);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+        if (req.method === 'PATCH' || req.method === 'PUT') {
+          const body = await readJsonBody(req);
+          const result = patchProjectResource(memberId, pid, body);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+        if (req.method === 'DELETE') {
+          const result = deleteProjectResource(memberId, pid);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+      }
+
+      if (req.method === 'POST' && url === '/api/tasks') {
+        const body = await readJsonBody(req);
+        const result = createTaskResource(memberId, body);
+        sendJson(res, result.status || 201, result);
+        return true;
+      }
+
+      const taskItemMatch = url.match(/^\/api\/tasks\/([^/]+)$/);
+      if (taskItemMatch) {
+        const tid = decodeURIComponent(taskItemMatch[1]);
+        if (req.method === 'PATCH' || req.method === 'PUT') {
+          const body = await readJsonBody(req);
+          const result = patchTaskResource(memberId, tid, body);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+        if (req.method === 'DELETE') {
+          const result = deleteTaskResource(memberId, tid);
+          sendJson(res, result.status || 200, result);
+          return true;
+        }
+      }
+
+      const taskCommentMatch = url.match(/^\/api\/tasks\/([^/]+)\/comments$/);
+      if (taskCommentMatch && req.method === 'POST') {
+        const tid = decodeURIComponent(taskCommentMatch[1]);
+        const body = await readJsonBody(req);
+        const result = createCommentResource(memberId, tid, body);
+        sendJson(res, result.status || 201, result);
+        return true;
       }
 
       sendJson(res, 404, { error: 'Not found' });

@@ -191,9 +191,7 @@ export const projectMembers = pid => {
   }
   const memberSet = new Set(p.members || []);
   if (p.lead) memberSet.add(p.lead);
-  return D().members.filter(
-    m => m.status !== 'deactivated' && (memberSet.has(m.id) || m.role === 'Owner' || m.role === 'Admin'),
-  );
+  return D().members.filter(m => m.status !== 'deactivated' && (memberSet.has(m.id) || m.role === 'Owner' || m.role === 'Admin'));
 };
 export const visibleMembers = () => {
   if (isAdmin()) return D().members;

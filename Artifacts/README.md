@@ -19,3 +19,5 @@ This folder (`Artifacts/`) contains the complete architectural review, audit fin
    - Complete audit of all API endpoints, UI flows, user-scoped operations (`D().me` / `me()`), and role-based permissions.
 5. **[05 — Authentication & Authorization 3-Phase Implementation Plan](./05-authentication-3-phase-plan.md)**
    - Detailed 3-phase implementation plan for SQLite credential/session storage, frontend auth integration, and RBAC enforcement.
+6. **[06 — Project-Scoped Isolation (Confidential Projects) Plan](./06-project-isolation-plan.md)**
+   - Complete security audit, authorization architecture (`server/authz.js`), and 5-phase implementation of strict project-level and member isolation.

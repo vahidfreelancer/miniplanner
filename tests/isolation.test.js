@@ -491,10 +491,7 @@ test('Phase 0-2: Project-Scoped Isolation (Read, Write & C3 Data-Loss Prevention
 
     // Alice now sees both P1 and P2 on her next GET /api/state!
     const getAAfterAdd = await apiReq(srv.baseUrl, 'GET', '/api/state', { token: memberAToken });
-    assert.deepEqual(
-      getAAfterAdd.json.data.projects.map(p => p.id).sort(),
-      ['p1', 'p2'],
-    );
+    assert.deepEqual(getAAfterAdd.json.data.projects.map(p => p.id).sort(), ['p1', 'p2']);
 
     // Admin removes Alice from P2 via PUT /api/admin/projects/p2/members
     const rmRes = await apiReq(srv.baseUrl, 'PUT', '/api/admin/projects/p2/members', {
@@ -509,5 +506,50 @@ test('Phase 0-2: Project-Scoped Isolation (Read, Write & C3 Data-Loss Prevention
       getAAfterRm.json.data.projects.map(p => p.id),
       ['p1'],
     );
+  });
+
+  // 7. Phase 5: Granular Resource Endpoints & Non-Enumerable 404 on Out-of-Scope Projects/Tasks
+  await t.test('Phase 5: Granular /api/projects/:id and /api/tasks/:id return 404 (not 403) for out-of-scope resources', async () => {
+    // Member A probing out-of-scope Project P2 or Task t2 receives 404 (non-enumerable)
+    const getP2AsA = await apiReq(srv.baseUrl, 'GET', '/api/projects/p2', { token: memberAToken });
+    assert.equal(getP2AsA.status, 404);
+
+    const patchP2AsA = await apiReq(srv.baseUrl, 'PATCH', '/api/projects/p2', {
+      token: memberAToken,
+      body: { name: 'P2 Renamed by A' },
+    });
+    assert.equal(patchP2AsA.status, 404);
+
+    const patchT2AsA = await apiReq(srv.baseUrl, 'PATCH', '/api/tasks/t2', {
+      token: memberAToken,
+      body: { title: 'T2 Renamed by A' },
+    });
+    assert.equal(patchT2AsA.status, 404);
+
+    const commentT2AsA = await apiReq(srv.baseUrl, 'POST', '/api/tasks/t2/comments', {
+      token: memberAToken,
+      body: { text: 'Sneaky comment on P2' },
+    });
+    assert.equal(commentT2AsA.status, 404);
+
+    // Member A can read & create tasks/comments in her assigned Project P1
+    const getP1AsA = await apiReq(srv.baseUrl, 'GET', '/api/projects/p1', { token: memberAToken });
+    assert.equal(getP1AsA.status, 200);
+    assert.equal(getP1AsA.json.project.id, 'p1');
+
+    const createTInP1 = await apiReq(srv.baseUrl, 'POST', '/api/tasks', {
+      token: memberAToken,
+      body: { project: 'p1', title: 'New Granular Task in P1', assignee: memberBId }, // Bob is not in P1, so assignee is scrubbed to null
+    });
+    assert.equal(createTInP1.status, 201);
+    assert.equal(createTInP1.json.task.title, 'New Granular Task in P1');
+    assert.equal(createTInP1.json.task.assignee, null);
+
+    // Guest viewer G on P1 gets 403 when trying to create or edit a task in P1
+    const createTAsGuest = await apiReq(srv.baseUrl, 'POST', '/api/tasks', {
+      token: guestGToken,
+      body: { project: 'p1', title: 'Guest Task' },
+    });
+    assert.equal(createTAsGuest.status, 403);
   });
 });

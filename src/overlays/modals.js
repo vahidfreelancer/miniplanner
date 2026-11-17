@@ -158,7 +158,13 @@ export function projectModal(m, H) {
         .join('')}</div></div>
     </div>
     <div class="row" style="gap:12px;flex-wrap:wrap">
-      ${isAdmin() ? `<div class="field" style="flex:1;min-width:150px"><label class="label" for="p-team">Team</label><select class="select" id="p-team" data-in="pform" data-f="team"><option value="" ${!f.team ? 'selected' : ''}>No team</option>${teamsList().map(t => `<option value="${t.id}" ${f.team === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>` : ''}
+      ${
+        isAdmin()
+          ? `<div class="field" style="flex:1;min-width:150px"><label class="label" for="p-team">Team</label><select class="select" id="p-team" data-in="pform" data-f="team"><option value="" ${!f.team ? 'selected' : ''}>No team</option>${teamsList()
+              .map(t => `<option value="${t.id}" ${f.team === t.id ? 'selected' : ''}>${esc(t.name)}</option>`)
+              .join('')}</select></div>`
+          : ''
+      }
       ${isAdmin() ? `<div class="field" style="flex:1;min-width:150px"><label class="label" for="p-lead">Lead</label><select class="select" id="p-lead" data-in="pform" data-f="lead">${(m.edit ? projectMembers(m.edit) : D().members.filter(x => x.status === 'active')).map(x => `<option value="${x.id}" ${f.lead === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>` : ''}
       <div class="field" style="flex:1;min-width:150px"><label class="label" for="p-due">Target date</label><input type="date" class="input" id="p-due" data-in="pform" data-f="due" value="${f.due || ''}"></div>
     </div>
@@ -184,7 +190,9 @@ export function shareModal(m, H) {
         ? `<div class="panel" style="padding:4px">${
             D()
               .members.filter(
-                x => !p.members.includes(x.id) && (x.name.toLowerCase().includes(S.ui.shareQ.toLowerCase()) || (x.email || '').toLowerCase().includes(S.ui.shareQ.toLowerCase())),
+                x =>
+                  !p.members.includes(x.id) &&
+                  (x.name.toLowerCase().includes(S.ui.shareQ.toLowerCase()) || (x.email || '').toLowerCase().includes(S.ui.shareQ.toLowerCase())),
               )
               .map(
                 x =>

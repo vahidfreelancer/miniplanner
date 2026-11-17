@@ -131,8 +131,7 @@ export function groupTasks(ts, g) {
       ...pool.map(m => ({ key: m.id, name: m.name, html: av(m.id, 'sm', false), set: { assignee: m.id } })),
       { key: 'none', name: 'Unassigned', html: av(null, 'sm', false), set: { assignee: null } },
     ];
-  }
-  else if (g === 'project')
+  } else if (g === 'project')
     groups = visibleProjects()
       .filter(canSee)
       .map(p => ({ key: p.id, name: p.name, html: `<span class="pdot" style="--c:${pColor(p)}"></span>`, set: { project: p.id } }));

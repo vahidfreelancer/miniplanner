@@ -69,10 +69,9 @@ export const sel = (k, opts, v) =>
 export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
   const admin = isAdmin();
-  const navGroups = SET_NAV.map(([g, items]) => [
-    g,
-    items.filter(([k]) => admin || (k !== 'teams' && k !== 'permissions')),
-  ]).filter(([, items]) => items.length);
+  const navGroups = SET_NAV.map(([g, items]) => [g, items.filter(([k]) => admin || (k !== 'teams' && k !== 'permissions'))]).filter(
+    ([, items]) => items.length,
+  );
   const title = navGroups.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
   return `<div class="set">
     <nav class="set-nav" aria-label="Settings">${navGroups.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
