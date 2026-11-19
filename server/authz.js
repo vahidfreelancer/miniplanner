@@ -183,11 +183,11 @@ export function redactMemberForScope(scope, mRow) {
   if (!mRow) return null;
   if (!scope.isAdmin && !scope.visibleMemberIds.has(mRow.id)) return null;
   const isSelf = mRow.id === scope.memberId;
-  const showEmail = scope.isAdmin || isSelf;
+  const showSensitive = scope.isAdmin || isSelf;
   return {
     id: mRow.id,
     name: mRow.name,
-    email: showEmail ? mRow.email : '',
+    email: showSensitive ? mRow.email : '',
     role: mRow.role,
     team: scope.isAdmin ? mRow.team_id : '',
     title: mRow.title,
@@ -195,5 +195,8 @@ export function redactMemberForScope(scope, mRow) {
     status: mRow.status,
     last: mRow.last_active,
     tz: mRow.timezone,
+    ...(showSensitive && mRow.telegram_id ? { telegramId: String(mRow.telegram_id) } : {}),
+    ...(showSensitive && mRow.telegram_username ? { telegramUsername: String(mRow.telegram_username) } : {}),
+    ...(showSensitive && mRow.telegram_linked_at ? { telegramLinkedAt: mRow.telegram_linked_at } : {}),
   };
 }

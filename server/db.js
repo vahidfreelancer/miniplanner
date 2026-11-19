@@ -89,6 +89,17 @@ function migrateSchema(db) {
   addColumnIfMissing(db, 'members', 'tfa_secret', 'TEXT NULL');
   addColumnIfMissing(db, 'members', 'tfa_enabled', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'members', 'recovery_codes_json', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(db, 'members', 'telegram_id', 'TEXT NULL');
+  addColumnIfMissing(db, 'members', 'telegram_username', 'TEXT NULL');
+  addColumnIfMissing(db, 'members', 'telegram_linked_at', 'INTEGER NULL');
+
+  addColumnIfMissing(db, 'workspace_settings', 'tg_bot_token', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, 'workspace_settings', 'tg_bot_username', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, 'workspace_settings', 'tg_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'workspace_settings', 'tg_mode', "TEXT NOT NULL DEFAULT 'polling'");
+  addColumnIfMissing(db, 'workspace_settings', 'tg_webhook_url', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, 'workspace_settings', 'tg_webhook_secret', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, 'workspace_settings', 'tg_last_update_id', 'INTEGER NOT NULL DEFAULT 0');
 
   addColumnIfMissing(db, 'sessions', 'token_hash', 'TEXT NULL');
   addColumnIfMissing(db, 'sessions', 'member_id', "TEXT NOT NULL DEFAULT 'm1'");
@@ -104,6 +115,7 @@ function migrateSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id);
     CREATE INDEX IF NOT EXISTS idx_members_email ON members(email);
+    CREATE INDEX IF NOT EXISTS idx_members_telegram_id ON members(telegram_id);
     CREATE INDEX IF NOT EXISTS idx_pm_member ON project_members(member_id);
     CREATE INDEX IF NOT EXISTS idx_notif_recipient ON notifications(recipient_id);
   `);
@@ -163,6 +175,13 @@ function initSchema(db) {
       collapsed INTEGER NOT NULL DEFAULT 0,
       notif_prefs_json TEXT NOT NULL DEFAULT '{}',
       recent_searches_json TEXT NOT NULL DEFAULT '[]',
+      tg_bot_token TEXT NOT NULL DEFAULT '',
+      tg_bot_username TEXT NOT NULL DEFAULT '',
+      tg_enabled INTEGER NOT NULL DEFAULT 0,
+      tg_mode TEXT NOT NULL DEFAULT 'polling',
+      tg_webhook_url TEXT NOT NULL DEFAULT '',
+      tg_webhook_secret TEXT NOT NULL DEFAULT '',
+      tg_last_update_id INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
 
@@ -205,6 +224,9 @@ function initSchema(db) {
       tfa_secret TEXT NULL,
       tfa_enabled INTEGER NOT NULL DEFAULT 0,
       recovery_codes_json TEXT NOT NULL DEFAULT '[]',
+      telegram_id TEXT NULL,
+      telegram_username TEXT NULL,
+      telegram_linked_at INTEGER NULL,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -1508,6 +1530,24 @@ export function loadState(memberId = null, currentSessionId = null) {
       userNotifPrefs && typeof userNotifPrefs === 'object' ? userNotifPrefs : isAdminReader ? JSON.parse(wsRow.notif_prefs_json || '{}') : seed().notifPrefs;
     const resolvedCollapsed = typeof userCollapsed === 'boolean' ? userCollapsed : Boolean(wsRow.collapsed);
 
+    const rawToken = wsRow.tg_bot_token || '';
+    const tokenMasked = rawToken ? `${rawToken.slice(0, Math.min(6, rawToken.length))}••••••••${rawToken.slice(-4)}` : '';
+    const telegramState = isAdminReader
+      ? {
+          enabled: Boolean(wsRow.tg_enabled),
+          botUsername: wsRow.tg_bot_username || '',
+          hasToken: Boolean(rawToken),
+          tokenMasked,
+          mode: wsRow.tg_mode || 'polling',
+          webhookUrl: wsRow.tg_webhook_url || '',
+          hasWebhookSecret: Boolean(wsRow.tg_webhook_secret),
+          lastUpdateId: wsRow.tg_last_update_id || 0,
+        }
+      : {
+          enabled: Boolean(wsRow.tg_enabled),
+          botUsername: wsRow.tg_bot_username || '',
+        };
+
     return {
       data: {
         ws: {
@@ -1516,6 +1556,7 @@ export function loadState(memberId = null, currentSessionId = null) {
           c: wsRow.color,
           brand: Boolean(wsRow.brand),
         },
+        telegram: telegramState,
         workspaces,
         me: activeMe,
         teams,
@@ -1603,6 +1644,9 @@ function sanitizeMember(m) {
     c: m.color,
     status: m.status,
     tfa: Boolean(m.tfa_enabled),
+    ...(m.telegram_id ? { telegramId: String(m.telegram_id) } : {}),
+    ...(m.telegram_username ? { telegramUsername: String(m.telegram_username) } : {}),
+    ...(m.telegram_linked_at ? { telegramLinkedAt: m.telegram_linked_at } : {}),
   };
 }
 
@@ -2623,4 +2667,242 @@ export function createCommentResource(actorMemberId, taskId, body = {}) {
     status: 201,
     comment: { id: cid, task: taskId, by: actorMemberId, at: now, text, re: {} },
   };
+}
+
+/* =====================================================================
+   TELEGRAM BOT CONFIGURATION & MEMBER LINKING HELPERS
+   ===================================================================== */
+
+export function getTelegramConfigInternal() {
+  const db = getDb();
+  const ws = db.prepare('SELECT * FROM workspace_settings WHERE id = 1').get();
+  if (!ws) {
+    return {
+      botToken: '',
+      botUsername: '',
+      enabled: false,
+      mode: 'polling',
+      webhookUrl: '',
+      webhookSecret: '',
+      lastUpdateId: 0,
+    };
+  }
+  return {
+    botToken: ws.tg_bot_token || '',
+    botUsername: ws.tg_bot_username || '',
+    enabled: Boolean(ws.tg_enabled),
+    mode: ws.tg_mode || 'polling',
+    webhookUrl: ws.tg_webhook_url || '',
+    webhookSecret: ws.tg_webhook_secret || '',
+    lastUpdateId: Number(ws.tg_last_update_id || 0),
+  };
+}
+
+export function setTelegramLastUpdateId(lastUpdateId) {
+  const db = getDb();
+  db.prepare('UPDATE workspace_settings SET tg_last_update_id = ? WHERE id = 1').run(Number(lastUpdateId) || 0);
+}
+
+export function getTelegramSettings(actorMemberId) {
+  const db = getDb();
+  const scope = getScope(db, actorMemberId);
+  const cfg = getTelegramConfigInternal();
+  const meRow = actorMemberId ? db.prepare('SELECT id, telegram_id, telegram_username, telegram_linked_at FROM members WHERE id = ?').get(actorMemberId) : null;
+  const myTelegram = meRow
+    ? {
+        telegramId: meRow.telegram_id ? String(meRow.telegram_id) : null,
+        telegramUsername: meRow.telegram_username || '',
+        telegramLinkedAt: meRow.telegram_linked_at || null,
+      }
+    : null;
+
+  if (!scope.isAdmin) {
+    return {
+      ok: true,
+      status: 200,
+      settings: {
+        enabled: cfg.enabled,
+        botUsername: cfg.botUsername,
+      },
+      myTelegram,
+    };
+  }
+
+  const rawToken = cfg.botToken;
+  const tokenMasked = rawToken ? `${rawToken.slice(0, Math.min(6, rawToken.length))}••••••••${rawToken.slice(-4)}` : '';
+  return {
+    ok: true,
+    status: 200,
+    settings: {
+      enabled: cfg.enabled,
+      botUsername: cfg.botUsername,
+      hasToken: Boolean(rawToken),
+      tokenMasked,
+      mode: cfg.mode,
+      webhookUrl: cfg.webhookUrl,
+      hasWebhookSecret: Boolean(cfg.webhookSecret),
+      lastUpdateId: cfg.lastUpdateId,
+    },
+    myTelegram,
+  };
+}
+
+export function saveTelegramSettings(actorMemberId, body = {}) {
+  const db = getDb();
+  const scope = getScope(db, actorMemberId);
+  if (!scope.isAdmin) {
+    return { ok: false, status: 403, error: 'Only workspace owners and admins can configure Telegram Bot settings' };
+  }
+
+  const prev = getTelegramConfigInternal();
+  let nextToken = prev.botToken;
+  if (body.botToken !== undefined) {
+    const t = String(body.botToken).trim();
+    if (body.clearToken || t === '') {
+      nextToken = body.clearToken ? '' : prev.botToken;
+    } else if (!t.includes('••••')) {
+      nextToken = t;
+    }
+  }
+  const nextUsername = body.botUsername !== undefined ? String(body.botUsername).trim().replace(/^@+/, '') : prev.botUsername;
+  const nextEnabled = body.enabled !== undefined ? (body.enabled ? 1 : 0) : prev.enabled ? 1 : 0;
+  const nextMode = body.mode === 'webhook' ? 'webhook' : body.mode === 'polling' ? 'polling' : prev.mode;
+  const nextWebhookUrl = body.webhookUrl !== undefined ? String(body.webhookUrl).trim() : prev.webhookUrl;
+  let nextWebhookSecret = prev.webhookSecret;
+  if (body.webhookSecret !== undefined) {
+    const s = String(body.webhookSecret).trim();
+    if (body.clearWebhookSecret) nextWebhookSecret = '';
+    else if (s && !s.includes('••••')) nextWebhookSecret = s;
+  }
+
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE workspace_settings SET
+        tg_bot_token = ?,
+        tg_bot_username = ?,
+        tg_enabled = ?,
+        tg_mode = ?,
+        tg_webhook_url = ?,
+        tg_webhook_secret = ?,
+        updated_at = ?
+       WHERE id = 1`,
+    ).run(nextToken, nextUsername, nextEnabled, nextMode, nextWebhookUrl, nextWebhookSecret, now);
+
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'save_telegram_settings',
+      now,
+      JSON.stringify({
+        actor: actorMemberId,
+        enabled: Boolean(nextEnabled),
+        botUsername: nextUsername,
+        mode: nextMode,
+      }),
+    );
+  });
+  tx();
+
+  return getTelegramSettings(actorMemberId);
+}
+
+export function getMemberByTelegramId(telegramId) {
+  if (!telegramId) return null;
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM members WHERE telegram_id = ?').get(String(telegramId));
+  return row ? sanitizeMember(row) : null;
+}
+
+export function linkMemberTelegramById(memberId, { telegramId, telegramUsername = '' } = {}) {
+  if (!memberId || !telegramId) {
+    return { ok: false, status: 400, error: 'memberId and telegramId are required' };
+  }
+  const db = getDb();
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+  if (!member) {
+    return { ok: false, status: 404, error: 'Member not found' };
+  }
+  if (member.status === 'deactivated') {
+    return { ok: false, status: 403, error: 'This account has been deactivated' };
+  }
+  const cleanTgId = String(telegramId).trim();
+  const cleanTgUser = String(telegramUsername || '')
+    .trim()
+    .replace(/^@+/, '');
+  const now = Date.now();
+
+  const tx = db.transaction(() => {
+    // Ensure no other member retains the same telegram_id
+    db.prepare('UPDATE members SET telegram_id = NULL, telegram_username = NULL, telegram_linked_at = NULL WHERE telegram_id = ? AND id != ?').run(
+      cleanTgId,
+      memberId,
+    );
+    db.prepare('UPDATE members SET telegram_id = ?, telegram_username = ?, telegram_linked_at = ?, last_active = ? WHERE id = ?').run(
+      cleanTgId,
+      cleanTgUser,
+      now,
+      now,
+      memberId,
+    );
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'telegram_link_member',
+      now,
+      JSON.stringify({ memberId, email: member.email, telegramId: cleanTgId, telegramUsername: cleanTgUser }),
+    );
+  });
+  tx();
+
+  const updated = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+  return { ok: true, status: 200, member: sanitizeMember(updated) };
+}
+
+export function linkMemberTelegramByCredentials({ email, password, telegramId, telegramUsername = '' } = {}) {
+  const cleanEmail = String(email || '')
+    .trim()
+    .toLowerCase();
+  const rawPassword = String(password || '');
+  if (!cleanEmail || !rawPassword) {
+    return { ok: false, status: 400, error: 'Email and password are required' };
+  }
+  if (!telegramId) {
+    return { ok: false, status: 400, error: 'Telegram ID is required' };
+  }
+
+  const db = getDb();
+  const member = db.prepare('SELECT * FROM members WHERE LOWER(email) = ?').get(cleanEmail);
+  if (!member || !member.password_hash || !verifyPassword(rawPassword, member.password_hash)) {
+    return { ok: false, status: 401, error: 'Invalid email or password' };
+  }
+  if (member.status === 'deactivated') {
+    return { ok: false, status: 403, error: 'This account has been deactivated' };
+  }
+
+  return linkMemberTelegramById(member.id, { telegramId, telegramUsername });
+}
+
+export function unlinkMemberTelegram(actorMemberId, targetMemberId = null) {
+  const db = getDb();
+  const scope = getScope(db, actorMemberId);
+  const targetId = targetMemberId || actorMemberId;
+  if (!targetId) {
+    return { ok: false, status: 400, error: 'Member ID is required' };
+  }
+  if (targetId !== actorMemberId && !scope.isAdmin) {
+    return { ok: false, status: 403, error: 'Only admins can unlink another member’s Telegram account' };
+  }
+  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(targetId);
+  if (!member) {
+    return { ok: false, status: 404, error: 'Member not found' };
+  }
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE members SET telegram_id = NULL, telegram_username = NULL, telegram_linked_at = NULL WHERE id = ?').run(targetId);
+    db.prepare('INSERT INTO transactions_log (action, created_at, summary) VALUES (?, ?, ?)').run(
+      'telegram_unlink_member',
+      now,
+      JSON.stringify({ actor: actorMemberId, memberId: targetId }),
+    );
+  });
+  tx();
+  const updated = db.prepare('SELECT * FROM members WHERE id = ?').get(targetId);
+  return { ok: true, status: 200, member: sanitizeMember(updated) };
 }

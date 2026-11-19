@@ -2431,6 +2431,137 @@ A.disable2fa = () =>
     },
   });
 
+/* telegram bot (admin settings + member linking) */
+async function submitTelegramSettings(verify = false) {
+  if (!isAdmin()) {
+    toast('Only workspace admins can configure Telegram Bot settings');
+    return;
+  }
+  const enabled = Boolean($('#tg-enabled')?.checked);
+  const botToken = ($('#tg-token')?.value || '').trim();
+  const botUsername = ($('#tg-username')?.value || '').trim().replace(/^@+/, '');
+  const mode = $('#tg-mode')?.value === 'webhook' ? 'webhook' : 'polling';
+  const webhookUrl = ($('#tg-webhook')?.value || '').trim();
+  try {
+    const res = await fetch('/api/telegram/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled,
+        ...(botToken ? { botToken } : {}),
+        botUsername,
+        mode,
+        webhookUrl,
+        verify,
+      }),
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      toast(j.error || 'Could not save Telegram Bot settings');
+      return;
+    }
+    D().telegram = j.settings;
+    render();
+    toast(verify && j.botInfo ? `Verified @${j.botInfo.username} and saved settings` : 'Telegram Bot settings saved');
+  } catch {
+    toast('Unable to reach server');
+  }
+}
+
+A.saveTelegramSettings = () => submitTelegramSettings(false);
+A.verifyTelegramBot = () => submitTelegramSettings(true);
+
+A.pollTelegramNow = async () => {
+  if (!isAdmin()) return;
+  try {
+    const res = await fetch('/api/telegram/poll', { method: 'POST' });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      toast(j.error || 'Failed to poll Telegram updates');
+      return;
+    }
+    // Reload state so any newly linked member accounts appear immediately
+    const stateRes = await fetch('/api/state');
+    if (stateRes.ok) {
+      const fresh = await stateRes.json();
+      if (fresh?.data) S.data = fresh.data;
+    }
+    render();
+    toast(`Processed ${j.processed || 0} Telegram update${j.processed === 1 ? '' : 's'}`);
+  } catch {
+    toast('Unable to reach server');
+  }
+};
+
+A.sendTelegramMessage = async () => {
+  const memberId = $('#tg-send-member')?.value || '';
+  const chatId = ($('#tg-send-chat')?.value || '').trim();
+  const text = ($('#tg-send-text')?.value || '').trim();
+  if (!memberId && !chatId) {
+    toast('Select a linked member or enter a Telegram Chat ID');
+    return;
+  }
+  if (!text) {
+    toast('Enter a message to send');
+    return;
+  }
+  try {
+    const res = await fetch('/api/telegram/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: memberId || null, chatId: chatId || null, text }),
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      toast(j.error || 'Failed to send Telegram message');
+      return;
+    }
+    const txtEl = $('#tg-send-text');
+    if (txtEl) txtEl.value = '';
+    toast('Telegram message sent');
+  } catch {
+    toast('Unable to reach server');
+  }
+};
+
+A.genTelegramLinkCode = async () => {
+  try {
+    const res = await fetch('/api/telegram/link-code', { method: 'POST' });
+    const j = await res.json();
+    if (res.ok && j.ok) {
+      S.ui.tgLinkCode = j.code;
+      render();
+      toast('One-time Telegram link code generated');
+    } else {
+      toast(j.error || 'Could not generate link code');
+    }
+  } catch {
+    toast('Unable to reach server');
+  }
+};
+
+A.unlinkMemberTelegram = async el => {
+  const mid = el.dataset.id || D().me;
+  try {
+    const res = await fetch(`/api/telegram/link?memberId=${encodeURIComponent(mid)}`, { method: 'DELETE' });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      toast(j.error || 'Could not unlink Telegram account');
+      return;
+    }
+    const m = D().members.find(x => x.id === mid);
+    if (m) {
+      delete m.telegramId;
+      delete m.telegramUsername;
+      delete m.telegramLinkedAt;
+    }
+    render();
+    toast('Telegram account unlinked');
+  } catch {
+    toast('Unable to reach server');
+  }
+};
+
 /* auth */
 A.auth = el => {
   S.ui.auth = el.dataset.v;

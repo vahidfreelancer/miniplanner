@@ -13,6 +13,8 @@ import {
   getAdminProjectMembers,
   getAuthStatus,
   getProjectResource,
+  getTelegramConfigInternal,
+  getTelegramSettings,
   getTransactions,
   loadState,
   loginUser,
@@ -22,12 +24,25 @@ import {
   resetState,
   revokeUserSessions,
   saveState,
+  saveTelegramSettings,
   setupUser2fa,
   signupUser,
+  unlinkMemberTelegram,
   updateAdminMemberProjects,
   updateAdminProjectMembers,
   verifyAndEnableUser2fa,
 } from './db.js';
+import {
+  generateTelegramLinkCode,
+  getBotInfo,
+  getRecentTelegramMessages,
+  getRegisteredHandlersSummary,
+  handleTelegramUpdate,
+  pollTelegramUpdates,
+  sendMessage,
+  startTelegramPolling,
+  stopTelegramPolling,
+} from './telegram.js';
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -234,6 +249,24 @@ export function apiMiddleware() {
       }
 
       /* =========================================================
+         TELEGRAM WEBHOOK ENDPOINT (Public, verified by optional secret)
+         ========================================================= */
+      if (req.method === 'POST' && url === '/api/telegram/webhook') {
+        const cfg = getTelegramConfigInternal();
+        if (cfg.webhookSecret) {
+          const headerSecret = req.headers['x-telegram-bot-api-secret-token'] || '';
+          if (headerSecret !== cfg.webhookSecret) {
+            sendJson(res, 401, { ok: false, error: 'Invalid Telegram webhook secret token' });
+            return true;
+          }
+        }
+        const update = await readJsonBody(req);
+        const result = await handleTelegramUpdate(update);
+        sendJson(res, result.status || 200, result);
+        return true;
+      }
+
+      /* =========================================================
          STATE, RESET & TRANSACTIONS ENDPOINTS
          ========================================================= */
       const auth = getAuthStatus(token);
@@ -377,6 +410,97 @@ export function apiMiddleware() {
         const body = await readJsonBody(req);
         const result = createCommentResource(memberId, tid, body);
         sendJson(res, result.status || 201, result);
+        return true;
+      }
+
+      /* =========================================================
+         TELEGRAM BOT ENDPOINTS (/api/telegram/*)
+         ========================================================= */
+      if (req.method === 'GET' && url === '/api/telegram/settings') {
+        const result = getTelegramSettings(memberId);
+        if (result.ok && ['Owner', 'Admin'].includes(auth.member?.role)) {
+          result.handlers = getRegisteredHandlersSummary();
+          result.recentMessages = getRecentTelegramMessages();
+        }
+        sendJson(res, result.status || 200, result);
+        return true;
+      }
+
+      if ((req.method === 'PUT' || req.method === 'POST') && url === '/api/telegram/settings') {
+        const body = await readJsonBody(req);
+        // Optional token verification with getMe before or after saving
+        let botInfo = null;
+        if (body.verify) {
+          const cfg = getTelegramConfigInternal();
+          const candidateToken = body.botToken && !String(body.botToken).includes('••••') ? String(body.botToken).trim() : cfg.botToken;
+          if (candidateToken) {
+            const infoRes = await getBotInfo({ token: candidateToken });
+            if (infoRes.ok && infoRes.result) {
+              botInfo = infoRes.result;
+              if (!body.botUsername && botInfo.username) {
+                body.botUsername = botInfo.username;
+              }
+            } else if (!infoRes.ok) {
+              sendJson(res, infoRes.status || 400, { ok: false, error: infoRes.error || 'Failed to verify Telegram bot token' });
+              return true;
+            }
+          }
+        }
+        const result = saveTelegramSettings(memberId, body);
+        if (result.ok) {
+          if (result.settings?.enabled && result.settings?.mode === 'polling') {
+            startTelegramPolling();
+          } else {
+            stopTelegramPolling();
+          }
+          if (botInfo) {
+            result.botInfo = botInfo;
+          }
+        }
+        sendJson(res, result.status || 200, result);
+        return true;
+      }
+
+      if (req.method === 'POST' && url === '/api/telegram/send') {
+        const body = await readJsonBody(req);
+        const result = await sendMessage({
+          chatId: body.chatId || null,
+          memberId: body.memberId || null,
+          text: body.text || '',
+          parseMode: body.parseMode || undefined,
+          actorMemberId: memberId,
+        });
+        sendJson(res, result.status || (result.ok ? 200 : 400), result);
+        return true;
+      }
+
+      if (req.method === 'POST' && url === '/api/telegram/poll') {
+        if (!['Owner', 'Admin'].includes(auth.member?.role)) {
+          sendJson(res, 403, { ok: false, error: 'Only workspace owners and admins can poll Telegram updates' });
+          return true;
+        }
+        const result = await pollTelegramUpdates();
+        sendJson(res, result.status || 200, result);
+        return true;
+      }
+
+      if (req.method === 'POST' && url === '/api/telegram/link-code') {
+        const generated = generateTelegramLinkCode(memberId);
+        const cfg = getTelegramConfigInternal();
+        sendJson(res, 200, {
+          ok: true,
+          code: generated.code,
+          expiresAt: generated.expiresAt,
+          botUsername: cfg.botUsername || '',
+        });
+        return true;
+      }
+
+      if (req.method === 'DELETE' && url === '/api/telegram/link') {
+        const qp = getQueryParams(rawUrl);
+        const targetMid = qp.get('memberId') || memberId;
+        const result = unlinkMemberTelegram(memberId, targetMid);
+        sendJson(res, result.status || 200, result);
         return true;
       }
 

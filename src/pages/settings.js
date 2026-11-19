@@ -26,6 +26,7 @@ export const SET_NAV = [
       ['teams', 'Teams', 'users-round'],
       ['projects', 'Projects', 'folder-kanban'],
       ['permissions', 'Permissions', 'shield'],
+      ['telegram', 'Telegram Bot', 'send'],
     ],
   ],
   [
@@ -69,7 +70,7 @@ export const sel = (k, opts, v) =>
 export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
   const admin = isAdmin();
-  const navGroups = SET_NAV.map(([g, items]) => [g, items.filter(([k]) => admin || (k !== 'teams' && k !== 'permissions'))]).filter(
+  const navGroups = SET_NAV.map(([g, items]) => [g, items.filter(([k]) => admin || (k !== 'teams' && k !== 'permissions' && k !== 'telegram'))]).filter(
     ([, items]) => items.length,
   );
   const title = navGroups.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
@@ -258,6 +259,117 @@ export function settingsBody(sec, title) {
         }</tbody></table></div></div>`
       );
     }
+    case 'telegram': {
+      if (!isAdmin()) return page404();
+      const tg = d.telegram || { enabled: false, botUsername: '', hasToken: false, tokenMasked: '', mode: 'polling', webhookUrl: '' };
+      const allMems = visibleMembers();
+      const linkedMems = allMems.filter(m => m.telegramId);
+      return (
+        H('Configure your workspace Telegram Bot, manage message reception, and inspect linked member accounts.') +
+        `<form data-submit="saveTelegramSettings">
+          <div class="sblock" style="margin-top:0">
+            <h2>Bot Configuration (Admin Only)</h2>
+            ${srow(
+              'Enable Telegram Bot',
+              'Allow sending and receiving messages via the Telegram Bot API.',
+              `<input type="checkbox" class="toggle" id="tg-enabled" ${tg.enabled ? 'checked' : ''} aria-label="Enable Telegram Bot">`,
+            )}
+            <div class="col" style="gap:14px;max-width:500px;margin-top:14px">
+              <div class="field">
+                <label class="label" for="tg-token">Bot API Token (from @BotFather)</label>
+                <input type="password" class="input mono" id="tg-token" placeholder="${esc(tg.tokenMasked || '123456789:ABCdefGHIjklMNOpqrSTUvwxYZ')}" value="">
+                <span class="hint">${tg.hasToken ? `Saved token: <code>${esc(tg.tokenMasked)}</code>. Leave blank to keep existing token.` : 'Paste the HTTP API token issued by @BotFather.'}</span>
+              </div>
+              <div class="field">
+                <label class="label" for="tg-username">Bot Username</label>
+                <div class="row" style="gap:0">
+                  <span class="input" style="width:auto;background:var(--surface-2);border-right:0;border-radius:6px 0 0 6px;display:flex;align-items:center;color:var(--text-2)">@</span>
+                  <input class="input" id="tg-username" placeholder="my_workspace_bot" value="${esc(tg.botUsername || '')}" style="border-radius:0 6px 6px 0">
+                </div>
+              </div>
+              <div class="field">
+                <label class="label" for="tg-mode">Receive Mode</label>
+                <select class="select" id="tg-mode">
+                  <option value="polling" ${tg.mode !== 'webhook' ? 'selected' : ''}>Long Polling (getUpdates)</option>
+                  <option value="webhook" ${tg.mode === 'webhook' ? 'selected' : ''}>Webhook (POST /api/telegram/webhook)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="label" for="tg-webhook">Webhook URL (optional)</label>
+                <input class="input" id="tg-webhook" placeholder="https://example.com/api/telegram/webhook" value="${esc(tg.webhookUrl || '')}">
+              </div>
+              <div class="row" style="gap:10px;flex-wrap:wrap">
+                <button type="submit" class="btn btn-primary" data-a="saveTelegramSettings" id="tg-save">${ic('check', 14)}<span>Save settings</span></button>
+                <button type="button" class="btn btn-secondary" data-a="verifyTelegramBot">${ic('shield-check', 14)}<span>Save & Verify Token</span></button>
+                <button type="button" class="btn btn-secondary" data-a="pollTelegramNow">${ic('refresh-cw', 14)}<span>Fetch Updates Now</span></button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <div class="sblock">
+          <h2>Send Message via Bot</h2>
+          <p class="muted" style="font-size:13px;margin:2px 0 12px">Send a direct Telegram message to a linked workspace member or a specific Telegram Chat ID.</p>
+          <form data-submit="sendTelegramMessage" class="col" style="gap:12px;max-width:500px">
+            <div class="field">
+              <label class="label" for="tg-send-member">Recipient Member (Linked)</label>
+              <select class="select" id="tg-send-member">
+                <option value="">— Or enter raw Chat ID below —</option>
+                ${linkedMems.map(m => `<option value="${m.id}">${esc(m.name)} (${m.telegramUsername ? '@' + esc(m.telegramUsername) : 'ID: ' + esc(m.telegramId)})</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="tg-send-chat">Or Telegram Chat ID</label>
+              <input class="input mono" id="tg-send-chat" placeholder="e.g. 123456789">
+            </div>
+            <div class="field">
+              <label class="label" for="tg-send-text">Message Text</label>
+              <textarea class="textarea" id="tg-send-text" rows="3" placeholder="Write message to send via Telegram Bot..."></textarea>
+            </div>
+            <div>
+              <button type="submit" class="btn btn-primary" data-a="sendTelegramMessage">${ic('send', 14)}<span>Send Telegram message</span></button>
+            </div>
+          </form>
+        </div>
+
+        <div class="sblock">
+          <h2>Member Bot Login & Linked Accounts (${linkedMems.length}/${allMems.length})</h2>
+          <p class="muted" style="font-size:13px;margin:2px 0 12px">
+            Registered workspace members can log in directly with the Telegram bot by sending <code>/login &lt;email&gt; &lt;password&gt;</code> or <code>/link &lt;CODE&gt;</code> in Telegram. Once authenticated, their Telegram ID and username are automatically saved in the database.
+          </p>
+          <div class="panel" style="padding:0;overflow:hidden">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th style="padding-left:14px">Member</th>
+                  <th style="text-align:left">Role</th>
+                  <th style="text-align:left">Telegram Status</th>
+                  <th style="text-align:left">Telegram ID & Username</th>
+                  <th style="width:120px;text-align:right;padding-right:12px">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${allMems
+                  .map(
+                    m => `<tr>
+                      <td style="padding-left:14px">
+                        <div class="row" style="gap:8px">${av(m.id, 'sm', false)}<div><div style="font-weight:500">${esc(m.name)}</div><div class="faint" style="font-size:11.5px">${esc(m.email)}</div></div></div>
+                      </td>
+                      <td style="text-align:left"><span class="badge">${esc(m.role)}</span></td>
+                      <td style="text-align:left">${m.telegramId ? `<span class="badge green">Linked</span>` : `<span class="badge">Not linked</span>`}</td>
+                      <td style="text-align:left" class="mono">${m.telegramId ? `${esc(m.telegramId)}${m.telegramUsername ? ` · <span style="color:var(--accent)">@${esc(m.telegramUsername)}</span>` : ''}` : '<span class="faint">—</span>'}</td>
+                      <td style="text-align:right;padding-right:12px">
+                        ${m.telegramId ? `<button class="btn btn-secondary btn-sm" data-a="unlinkMemberTelegram" data-id="${m.id}">Unlink</button>` : ''}
+                      </td>
+                    </tr>`,
+                  )
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`
+      );
+    }
     case 'notif-email':
       return (
         H('Choose which emails you receive.') +
@@ -290,14 +402,24 @@ export function settingsBody(sec, title) {
       );
     case 'profile': {
       const err = S.ui.errors.pname2;
+      const curMe = me();
+      const tg = d.telegram || { enabled: false, botUsername: '' };
       return (
         H('How you appear to others in the workspace.') +
         `<form data-submit="saveProfile" class="col" style="gap:16px;max-width:440px">
-      <div class="row" style="gap:14px">${av(d.me, 'xl', false)}<div><div class="label" style="margin-bottom:6px">Avatar color</div><div class="swatches">${['#5A67D8', '#C54B78', '#3B82C4', '#23918A', '#C48A1E', '#8662C9'].map(c => `<button type="button" class="sw ${me().c === c ? 'on' : ''}" style="--c:${c};width:22px;height:22px" data-a="avColor" data-v="${c}" aria-label="Color"></button>`).join('')}</div></div></div>
+      <div class="row" style="gap:14px">${av(d.me, 'xl', false)}<div><div class="label" style="margin-bottom:6px">Avatar color</div><div class="swatches">${['#5A67D8', '#C54B78', '#3B82C4', '#23918A', '#C48A1E', '#8662C9'].map(c => `<button type="button" class="sw ${curMe.c === c ? 'on' : ''}" style="--c:${c};width:22px;height:22px" data-a="avColor" data-v="${c}" aria-label="Color"></button>`).join('')}</div></div></div>
       <div class="field"><label class="label" for="pf-name">Full name</label><input class="input ${err ? 'is-error' : ''}" id="pf-name" value="${esc(P.name)}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
       <div class="field"><label class="label" for="pf-title">Title</label><input class="input" id="pf-title" value="${esc(P.title)}"></div>
-      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(me().email)}" disabled><span class="hint">Contact a workspace owner to change your sign-in email.</span></div>
-      <div><button class="btn btn-primary" data-a="saveProfile" id="pf-save">Save profile</button></div></form>`
+      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(curMe.email)}" disabled><span class="hint">Contact a workspace owner to change your sign-in email.</span></div>
+      <div><button class="btn btn-primary" data-a="saveProfile" id="pf-save">Save profile</button></div></form>
+      <div class="sblock">
+        <h2>Telegram Account</h2>
+        ${
+          curMe.telegramId
+            ? `<div class="panel" style="padding:14px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:10px"><div><div class="row" style="gap:8px"><b>Linked to Telegram</b><span class="badge green">Connected</span></div><div class="muted" style="font-size:13px;margin-top:4px">Telegram ID: <code class="mono">${esc(curMe.telegramId)}</code>${curMe.telegramUsername ? ` · Username: <code class="mono">@${esc(curMe.telegramUsername)}</code>` : ''}</div></div><button class="btn btn-danger-ghost btn-sm" data-a="unlinkMemberTelegram" data-id="${curMe.id}">Unlink Telegram</button></div></div>`
+            : `<div class="panel" style="padding:14px"><div class="col" style="gap:10px"><div><b>Link your Telegram account</b><p class="muted" style="font-size:13px;margin:4px 0 0">Open ${tg.botUsername ? `<b>@${esc(tg.botUsername)}</b>` : 'the workspace Telegram bot'} and log in with your email and password: <code>/login ${esc(curMe.email)} &lt;password&gt;</code>, or generate a one-time link code below.</p></div>${S.ui.tgLinkCode ? `<div class="mono" style="padding:10px 12px;background:var(--sunken);border:1px solid var(--border);border-radius:6px;font-size:13px">Send to bot: <b>/link ${esc(S.ui.tgLinkCode)}</b></div>` : ''}<div><button type="button" class="btn btn-secondary btn-sm" data-a="genTelegramLinkCode">${ic('key-round', 13)}<span>Generate one-time link code</span></button></div></div></div>`
+        }
+      </div>`
       );
     }
     case 'preferences':
