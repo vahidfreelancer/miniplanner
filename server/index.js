@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { apiMiddleware } from './api.js';
 import { DB_PATH, getDb } from './db.js';
+import { startTelegramPolling } from './telegram.js';
 
 const PORT = Number(process.env.PORT || 5173);
 const DIST_DIR = path.resolve('dist');
@@ -19,6 +20,7 @@ const MIME = {
 };
 
 getDb();
+startTelegramPolling();
 
 const server = http.createServer(async (req, res) => {
   const handled = await handleApi(req, res);

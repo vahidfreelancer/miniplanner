@@ -99,6 +99,12 @@ test('Telegram Bot Module: Settings, Send, Receive, Handler Declaration, and Mem
         }),
       };
     }
+    if (url.endsWith('/deleteWebhook') || url.endsWith('/setMyCommands') || url.endsWith('/deleteMessage') || url.endsWith('/answerCallbackQuery')) {
+      return {
+        status: 200,
+        json: async () => ({ ok: true, result: true }),
+      };
+    }
     return {
       status: 400,
       json: async () => ({ ok: false, description: 'Unknown Telegram method' }),
@@ -410,5 +416,81 @@ test('Telegram Bot Module: Settings, Send, Receive, Handler Declaration, and Mem
       body: { memberId: bobId, text: 'Trying to message across isolated projects' },
     });
     assert.equal(crossProjectSend.status, 403);
+  });
+
+  await t.test('6. Interactive multi-step login via on-screen menu keys (🔑 Log in -> Email -> Password -> Logged in)', async () => {
+    // First unlink Alice via the "🚪 Log out" on-screen menu key
+    outboundCalls.length = 0;
+    const logoutRes = await handleTelegramUpdate({
+      update_id: 1005,
+      message: {
+        message_id: 60,
+        from: { id: 77889900, username: 'alice_tg_user' },
+        chat: { id: 77889900 },
+        text: '🚪 Log out',
+      },
+    });
+    assert.equal(logoutRes.ok, true);
+    assert.equal(logoutRes.member, null);
+    const logoutMsg = outboundCalls.find(c => c.url.endsWith('/sendMessage'));
+    assert.match(logoutMsg.payload.text, /Unlinked Telegram/);
+    // Verify unauthenticated menu keyboard includes "🔑 Log in"
+    assert.equal(logoutMsg.payload.reply_markup.keyboard[0][0].text, '🔑 Log in');
+
+    // Step 1: User taps "🔑 Log in" on-screen menu button
+    outboundCalls.length = 0;
+    await handleTelegramUpdate({
+      update_id: 1006,
+      message: {
+        message_id: 61,
+        from: { id: 77889900, username: 'alice_tg_user' },
+        chat: { id: 77889900 },
+        text: '🔑 Log in',
+      },
+    });
+    const askEmailMsg = outboundCalls.find(c => c.url.endsWith('/sendMessage'));
+    assert.match(askEmailMsg.payload.text, /enter your workspace email/i);
+    assert.equal(askEmailMsg.payload.reply_markup.keyboard[0][0].text, '❌ Cancel');
+
+    // Step 2: User types their email
+    outboundCalls.length = 0;
+    await handleTelegramUpdate({
+      update_id: 1007,
+      message: {
+        message_id: 62,
+        from: { id: 77889900, username: 'alice_tg_user' },
+        chat: { id: 77889900 },
+        text: 'alice@company.com',
+      },
+    });
+    const askPwMsg = outboundCalls.find(c => c.url.endsWith('/sendMessage'));
+    assert.match(askPwMsg.payload.text, /enter your password/i);
+
+    // Step 3: User types their password -> automatically logged in, telegram_id & username saved, menu keyboard updated
+    outboundCalls.length = 0;
+    const finalLogin = await handleTelegramUpdate({
+      update_id: 1008,
+      message: {
+        message_id: 63,
+        from: { id: 77889900, username: 'alice_interactive_tg' },
+        chat: { id: 77889900 },
+        text: 'AlicePassword123!',
+      },
+    });
+    assert.equal(finalLogin.ok, true);
+    assert.equal(finalLogin.member.id, aliceId);
+    assert.equal(finalLogin.member.telegramId, '77889900');
+    assert.equal(finalLogin.member.telegramUsername, 'alice_interactive_tg');
+
+    const successMsg = outboundCalls.find(c => c.url.endsWith('/sendMessage'));
+    assert.match(successMsg.payload.text, /Logged in and linked to Alice Member/);
+    // Logged-in menu keyboard now shows "📋 My Tasks" and "👤 My Account"
+    assert.equal(successMsg.payload.reply_markup.keyboard[0][0].text, '📋 My Tasks');
+    assert.equal(successMsg.payload.reply_markup.keyboard[0][1].text, '👤 My Account');
+
+    // Verify deleteMessage was called to remove the password message from chat history
+    const delMsgCall = outboundCalls.find(c => c.url.endsWith('/deleteMessage'));
+    assert.ok(delMsgCall);
+    assert.equal(delMsgCall.payload.message_id, 63);
   });
 });

@@ -335,7 +335,7 @@ export function settingsBody(sec, title) {
         <div class="sblock">
           <h2>Member Bot Login & Linked Accounts (${linkedMems.length}/${allMems.length})</h2>
           <p class="muted" style="font-size:13px;margin:2px 0 12px">
-            Registered workspace members can log in directly with the Telegram bot by sending <code>/login &lt;email&gt; &lt;password&gt;</code> or <code>/link &lt;CODE&gt;</code> in Telegram. Once authenticated, their Telegram ID and username are automatically saved in the database.
+            Registered workspace members can log in interactively using the on-screen menu keys in Telegram (tapping <b>🔑 Log in</b> or <b>🔗 Enter Link Code</b> after sending <code>/start</code>), or with <code>/login &lt;email&gt; &lt;password&gt;</code>. Once authenticated, their Telegram ID and username are automatically saved in the database.
           </p>
           <div class="panel" style="padding:0;overflow:hidden">
             <table class="tbl">

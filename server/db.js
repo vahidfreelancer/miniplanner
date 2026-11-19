@@ -2765,7 +2765,8 @@ export function saveTelegramSettings(actorMemberId, body = {}) {
     }
   }
   const nextUsername = body.botUsername !== undefined ? String(body.botUsername).trim().replace(/^@+/, '') : prev.botUsername;
-  const nextEnabled = body.enabled !== undefined ? (body.enabled ? 1 : 0) : prev.enabled ? 1 : 0;
+  const isAddingFirstToken = Boolean(nextToken && !prev.botToken);
+  const nextEnabled = isAddingFirstToken && body.enabled !== false ? 1 : body.enabled !== undefined ? (body.enabled ? 1 : 0) : prev.enabled ? 1 : 0;
   const nextMode = body.mode === 'webhook' ? 'webhook' : body.mode === 'polling' ? 'polling' : prev.mode;
   const nextWebhookUrl = body.webhookUrl !== undefined ? String(body.webhookUrl).trim() : prev.webhookUrl;
   let nextWebhookSecret = prev.webhookSecret;

@@ -2437,8 +2437,11 @@ async function submitTelegramSettings(verify = false) {
     toast('Only workspace admins can configure Telegram Bot settings');
     return;
   }
-  const enabled = Boolean($('#tg-enabled')?.checked);
   const botToken = ($('#tg-token')?.value || '').trim();
+  const hasNewToken = Boolean(botToken && !botToken.includes('••••'));
+  const enabledCheckbox = $('#tg-enabled');
+  const enabled = hasNewToken ? true : Boolean(enabledCheckbox?.checked);
+  if (hasNewToken && enabledCheckbox) enabledCheckbox.checked = true;
   const botUsername = ($('#tg-username')?.value || '').trim().replace(/^@+/, '');
   const mode = $('#tg-mode')?.value === 'webhook' ? 'webhook' : 'polling';
   const webhookUrl = ($('#tg-webhook')?.value || '').trim();

@@ -77,12 +77,18 @@ function getQueryParams(rawUrl = '') {
 }
 
 export function apiMiddleware() {
+  let _pollingInitialized = false;
   return async (req, res, next) => {
     const rawUrl = req.url || '';
     const url = rawUrl.split('?')[0];
     if (!url.startsWith('/api/')) {
       if (next) return next();
       return false;
+    }
+
+    if (!_pollingInitialized && !process.env.MINIPLANNER_DB_PATH) {
+      _pollingInitialized = true;
+      startTelegramPolling();
     }
 
     try {
@@ -428,22 +434,20 @@ export function apiMiddleware() {
 
       if ((req.method === 'PUT' || req.method === 'POST') && url === '/api/telegram/settings') {
         const body = await readJsonBody(req);
-        // Optional token verification with getMe before or after saving
+        const cfg = getTelegramConfigInternal();
+        const candidateToken = body.botToken && !String(body.botToken).includes('••••') ? String(body.botToken).trim() : cfg.botToken;
+        // Automatically verify with getMe when a new token is provided or when verify=true
         let botInfo = null;
-        if (body.verify) {
-          const cfg = getTelegramConfigInternal();
-          const candidateToken = body.botToken && !String(body.botToken).includes('••••') ? String(body.botToken).trim() : cfg.botToken;
-          if (candidateToken) {
-            const infoRes = await getBotInfo({ token: candidateToken });
-            if (infoRes.ok && infoRes.result) {
-              botInfo = infoRes.result;
-              if (!body.botUsername && botInfo.username) {
-                body.botUsername = botInfo.username;
-              }
-            } else if (!infoRes.ok) {
-              sendJson(res, infoRes.status || 400, { ok: false, error: infoRes.error || 'Failed to verify Telegram bot token' });
-              return true;
+        if (candidateToken && (body.verify || (body.botToken && !String(body.botToken).includes('••••')))) {
+          const infoRes = await getBotInfo({ token: candidateToken });
+          if (infoRes.ok && infoRes.result) {
+            botInfo = infoRes.result;
+            if (!body.botUsername && botInfo.username) {
+              body.botUsername = botInfo.username;
             }
+          } else if (!infoRes.ok && body.verify) {
+            sendJson(res, infoRes.status || 400, { ok: false, error: infoRes.error || 'Failed to verify Telegram bot token' });
+            return true;
           }
         }
         const result = saveTelegramSettings(memberId, body);

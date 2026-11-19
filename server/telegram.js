@@ -16,7 +16,8 @@ import { getScope } from './authz.js';
    1. Send message (sendMessage, callTelegramApi)
    2. Receive message (handleTelegramUpdate, webhook & long-polling)
    3. Declare message & command handlers (onMessage, onCommand)
-   4. Member login with bot & auto-save Telegram ID / username in DB
+   4. Interactive member login & on-screen menu keyboards + auto-save
+      Telegram ID / username in DB
    ===================================================================== */
 
 let _fetchImpl = (...args) => globalThis.fetch(...args);
@@ -27,6 +28,118 @@ export function setTelegramFetch(fn) {
 
 export function resetTelegramFetch() {
   _fetchImpl = (...args) => globalThis.fetch(...args);
+}
+
+/* ---------- On-Screen Menu Keyboards (ReplyKeyboard + InlineKeyboard) ---------- */
+export const MENU_BTN = {
+  LOGIN: '🔑 Log in',
+  LINK_CODE: '🔗 Enter Link Code',
+  MY_ACCOUNT: '👤 My Account',
+  MY_TASKS: '📋 My Tasks',
+  HELP: '❓ Help',
+  LOGOUT: '🚪 Log out',
+  CANCEL: '❌ Cancel',
+};
+
+const BUTTON_TO_COMMAND = new Map([
+  [MENU_BTN.LOGIN.toLowerCase(), 'login'],
+  ['log in', 'login'],
+  ['login', 'login'],
+  [MENU_BTN.LINK_CODE.toLowerCase(), 'link'],
+  ['enter link code', 'link'],
+  ['link code', 'link'],
+  [MENU_BTN.MY_ACCOUNT.toLowerCase(), 'whoami'],
+  ['my account', 'whoami'],
+  ['whoami', 'whoami'],
+  [MENU_BTN.MY_TASKS.toLowerCase(), 'tasks'],
+  ['my tasks', 'tasks'],
+  ['tasks', 'tasks'],
+  [MENU_BTN.HELP.toLowerCase(), 'help'],
+  ['help', 'help'],
+  ['menu', 'menu'],
+  [MENU_BTN.LOGOUT.toLowerCase(), 'logout'],
+  ['log out', 'logout'],
+  ['logout', 'logout'],
+  [MENU_BTN.CANCEL.toLowerCase(), 'cancel'],
+  ['cancel', 'cancel'],
+]);
+
+export function buildMainMenuKeyboard(member = null) {
+  if (member) {
+    return {
+      keyboard: [
+        [{ text: MENU_BTN.MY_TASKS }, { text: MENU_BTN.MY_ACCOUNT }],
+        [{ text: MENU_BTN.HELP }, { text: MENU_BTN.LOGOUT }],
+      ],
+      resize_keyboard: true,
+      is_persistent: true,
+    };
+  }
+  return {
+    keyboard: [[{ text: MENU_BTN.LOGIN }, { text: MENU_BTN.LINK_CODE }], [{ text: MENU_BTN.HELP }]],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+export function buildCancelKeyboard() {
+  return {
+    keyboard: [[{ text: MENU_BTN.CANCEL }]],
+    resize_keyboard: true,
+    one_time_keyboard: true,
+  };
+}
+
+export function buildInlineMenuMarkup(member = null) {
+  if (member) {
+    return {
+      inline_keyboard: [
+        [
+          { text: MENU_BTN.MY_TASKS, callback_data: '/tasks' },
+          { text: MENU_BTN.MY_ACCOUNT, callback_data: '/whoami' },
+        ],
+        [
+          { text: MENU_BTN.HELP, callback_data: '/help' },
+          { text: MENU_BTN.LOGOUT, callback_data: '/logout' },
+        ],
+      ],
+    };
+  }
+  return {
+    inline_keyboard: [
+      [
+        { text: MENU_BTN.LOGIN, callback_data: '/login' },
+        { text: MENU_BTN.LINK_CODE, callback_data: '/link' },
+      ],
+      [{ text: MENU_BTN.HELP, callback_data: '/help' }],
+    ],
+  };
+}
+
+/* ---------- Interactive Login / Link Session State (per chatId) ---------- */
+const _chatSessions = new Map(); // chatId -> { step: 'await_email' | 'await_password' | 'await_link_code', email?: string, updatedAt: number }
+const CHAT_SESSION_TTL_MS = 15 * 60 * 1000;
+
+function getChatSession(chatId) {
+  const s = _chatSessions.get(String(chatId));
+  if (!s) return null;
+  if (Date.now() - s.updatedAt > CHAT_SESSION_TTL_MS) {
+    _chatSessions.delete(String(chatId));
+    return null;
+  }
+  return s;
+}
+
+function setChatSession(chatId, data) {
+  if (!data) {
+    _chatSessions.delete(String(chatId));
+    return;
+  }
+  _chatSessions.set(String(chatId), { ...data, updatedAt: Date.now() });
+}
+
+export function clearChatSessions() {
+  _chatSessions.clear();
 }
 
 /* ---------- One-time link codes for easy browser-to-bot login ---------- */
@@ -124,7 +237,6 @@ export async function sendMessage(targetOrChatId, textArg, extraOptions = {}) {
     const rawTarget = String(targetOrChatId ?? '').trim();
     text = String(textArg ?? '');
     opts = extraOptions || {};
-    // Determine if rawTarget is a workspace member ID or a Telegram chat_id
     const db = getDb();
     const memberRow = rawTarget ? db.prepare('SELECT id, telegram_id FROM members WHERE id = ?').get(rawTarget) : null;
     if (memberRow) {
@@ -155,12 +267,10 @@ export async function sendMessage(targetOrChatId, textArg, extraOptions = {}) {
     return { ok: false, status: 400, error: 'Message text is required' };
   }
 
-  // Optional scope check when an actorMemberId is passed
   if (opts.actorMemberId) {
     const db = getDb();
     const scope = getScope(db, opts.actorMemberId);
     if (!scope.isAdmin) {
-      // Non-admins can only message themselves or visible co-members
       const recipientRow = memberId
         ? db.prepare('SELECT id FROM members WHERE id = ?').get(memberId)
         : db.prepare('SELECT id FROM members WHERE telegram_id = ?').get(String(chatId));
@@ -207,10 +317,6 @@ let _handlerSeq = 0;
 
 /**
  * Declare a handler for incoming Telegram messages.
- * Usage:
- *   onMessage(async (ctx) => { ... })
- *   onMessage((ctx) => ctx.text.includes('urgent'), async (ctx) => { ... })
- *   onMessage(/ticket-\d+/i, async (ctx) => { ... })
  * Returns an unsubscribe function `() => void`.
  */
 export function onMessage(filterOrHandler, maybeHandler) {
@@ -244,15 +350,8 @@ export function onMessage(filterOrHandler, maybeHandler) {
   };
 }
 
-/**
- * Alias for `onMessage` so callers can use either name.
- */
 export const declareMessageHandler = onMessage;
 
-/**
- * Declare a handler for a `/command` (e.g. `onCommand('ping', ctx => ctx.reply('pong'))`).
- * Returns an unsubscribe function `() => void`.
- */
 export function onCommand(command, handler) {
   if (!command || typeof handler !== 'function') {
     throw new TypeError('onCommand requires a command name and a handler function');
@@ -275,6 +374,7 @@ export function onCommand(command, handler) {
 export function clearMessageHandlers({ includeBuiltIns = false } = {}) {
   _messageHandlers.length = 0;
   _commandHandlers.clear();
+  _chatSessions.clear();
   if (!includeBuiltIns) {
     registerBuiltInHandlers();
   }
@@ -287,14 +387,39 @@ export function getRegisteredHandlersSummary() {
   };
 }
 
-/* ---------- 4. Built-in Bot Login & Workspace Command Handlers ---------- */
+/* ---------- 4. Built-in Interactive Bot Login & On-Screen Menu Handlers ---------- */
 function registerBuiltInHandlers() {
-  // /login <email> <password> -> Authenticates registered member and saves telegram_id + telegram_username in DB
+  // /cancel -> Aborts any active interactive step and shows the main on-screen menu keyboard
+  onCommand('cancel', async ctx => {
+    setChatSession(ctx.chatId, null);
+    return ctx.reply('Cancelled. Choose an action from the menu below:', {
+      replyMarkup: buildMainMenuKeyboard(ctx.member),
+    });
+  });
+
+  // /login [email] [password] -> Supports both interactive step-by-step login and one-line `/login email password`
   onCommand('login', async ctx => {
     const parts = (ctx.argsText || '').trim().split(/\s+/).filter(Boolean);
-    if (parts.length < 2) {
-      return ctx.reply('Usage: /login <email> <password>\nOr generate a one-time link code from your Profile settings and send /link <code>.');
+
+    // Interactive mode when user taps "🔑 Log in" button or sends `/login` without arguments
+    if (parts.length === 0) {
+      setChatSession(ctx.chatId, { step: 'await_email' });
+      return ctx.reply('Please enter your workspace email address (or tap ❌ Cancel):', {
+        replyMarkup: buildCancelKeyboard(),
+      });
     }
+
+    // If user only provided email (`/login alice@company.com`), ask for password next
+    if (parts.length === 1) {
+      const candidateEmail = parts[0].trim();
+      setChatSession(ctx.chatId, { step: 'await_password', email: candidateEmail });
+      return ctx.reply(`Email: ${candidateEmail}\nNow please enter your password (or tap ❌ Cancel):`, {
+        replyMarkup: buildCancelKeyboard(),
+      });
+    }
+
+    // Direct `/login <email> <password>`
+    setChatSession(ctx.chatId, null);
     const email = parts[0];
     const password = parts.slice(1).join(' ');
     const telegramId = String(ctx.from?.id || ctx.chatId || '');
@@ -308,39 +433,54 @@ function registerBuiltInHandlers() {
     });
 
     if (!res.ok) {
-      return ctx.reply(`Login failed: ${res.error}`);
+      return ctx.reply(`Login failed: ${res.error}`, {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
     }
 
     ctx.member = res.member;
     const handleStr = telegramUsername ? ` (@${telegramUsername})` : '';
     return ctx.reply(
       `Logged in and linked to ${res.member.name} (${res.member.email}).\nYour Telegram ID ${telegramId}${handleStr} has been saved to your profile.`,
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
     );
   });
 
-  // /link <code> -> Links account via a one-time code generated in web UI
+  // /link [code] -> Supports interactive prompt when tapped from menu button or direct `/link <CODE>`
   onCommand('link', async ctx => {
     const code = (ctx.argsText || '').trim();
     if (!code) {
-      return ctx.reply('Usage: /link <CODE>\nOr log in directly with /login <email> <password>.');
+      setChatSession(ctx.chatId, { step: 'await_link_code' });
+      return ctx.reply('Please send your one-time link code (e.g. TG-1A2B3C4D) generated in Settings → Personal → Profile (or tap ❌ Cancel):', {
+        replyMarkup: buildCancelKeyboard(),
+      });
     }
+    setChatSession(ctx.chatId, null);
     const memberId = consumeTelegramLinkCode(code);
     if (!memberId) {
-      return ctx.reply('Invalid or expired link code. Please generate a new code in Settings or use /login <email> <password>.');
+      return ctx.reply('Invalid or expired link code. Please generate a new code in Settings or tap 🔑 Log in.', {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
     }
     const telegramId = String(ctx.from?.id || ctx.chatId || '');
     const telegramUsername = String(ctx.from?.username || '');
     const res = linkMemberTelegramById(memberId, { telegramId, telegramUsername });
     if (!res.ok) {
-      return ctx.reply(`Link failed: ${res.error}`);
+      return ctx.reply(`Link failed: ${res.error}`, {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
     }
     ctx.member = res.member;
     const handleStr = telegramUsername ? ` (@${telegramUsername})` : '';
-    return ctx.reply(`Account linked to ${res.member.name} (${res.member.email}).\nYour Telegram ID ${telegramId}${handleStr} has been saved to your profile.`);
+    return ctx.reply(
+      `Account linked to ${res.member.name} (${res.member.email}).\nYour Telegram ID ${telegramId}${handleStr} has been saved to your profile.`,
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
+    );
   });
 
-  // /start [optional_link_code]
-  onCommand('start', async ctx => {
+  // /start [optional_link_code] and /menu
+  const handleStartOrMenu = async ctx => {
+    setChatSession(ctx.chatId, null);
     const arg = (ctx.argsText || '').trim();
     if (arg && /^TG-[A-F0-9]+$/i.test(arg)) {
       const memberId = consumeTelegramLinkCode(arg);
@@ -350,70 +490,182 @@ function registerBuiltInHandlers() {
         const res = linkMemberTelegramById(memberId, { telegramId, telegramUsername });
         if (res.ok) {
           ctx.member = res.member;
-          return ctx.reply(`Welcome, ${res.member.name}! Your Telegram account (@${telegramUsername || telegramId}) is now linked.`);
+          return ctx.reply(`Welcome, ${res.member.name}! Your Telegram account (@${telegramUsername || telegramId}) is now linked.`, {
+            replyMarkup: buildMainMenuKeyboard(ctx.member),
+          });
         }
       }
     }
     if (ctx.member) {
-      return ctx.reply(`Welcome back, ${ctx.member.name} (${ctx.member.email})!\nCommands: /whoami, /tasks, /logout, /help`);
+      return ctx.reply(`Welcome back, ${ctx.member.name} (${ctx.member.email})!\nUse the menu buttons below to view your tasks or account:`, {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
     }
     return ctx.reply(
-      'Welcome to MiniPlanner Telegram Bot!\nTo link your workspace account, send:\n/login <email> <password>\nOr use a one-time link code from your profile: /link <CODE>',
+      'Welcome to MiniPlanner Telegram Bot!\nTap "🔑 Log in" on the menu below to sign in with your workspace email and password, or tap "🔗 Enter Link Code":',
+      { replyMarkup: buildMainMenuKeyboard(null) },
     );
-  });
+  };
+  onCommand('start', handleStartOrMenu);
+  onCommand('menu', handleStartOrMenu);
 
   // /whoami -> Shows linked member details
   onCommand('whoami', async ctx => {
+    setChatSession(ctx.chatId, null);
     if (!ctx.member) {
-      return ctx.reply('You are not logged in. Send /login <email> <password> to link your account.');
+      return ctx.reply('You are not logged in. Tap "🔑 Log in" below to link your workspace account.', {
+        replyMarkup: buildMainMenuKeyboard(null),
+      });
     }
     const tgUser = ctx.member.telegramUsername ? `@${ctx.member.telegramUsername}` : 'none';
     return ctx.reply(
       `Linked Member: ${ctx.member.name}\nEmail: ${ctx.member.email}\nRole: ${ctx.member.role}\nTelegram ID: ${ctx.member.telegramId}\nTelegram Username: ${tgUser}`,
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
     );
   });
 
   // /logout or /unlink -> Unlinks Telegram ID from member
   const handleUnlink = async ctx => {
+    setChatSession(ctx.chatId, null);
     if (!ctx.member) {
-      return ctx.reply('No linked workspace account found for this Telegram user.');
+      return ctx.reply('No linked workspace account found for this Telegram user.', {
+        replyMarkup: buildMainMenuKeyboard(null),
+      });
     }
     const name = ctx.member.name;
     unlinkMemberTelegram(ctx.member.id, ctx.member.id);
     ctx.member = null;
-    return ctx.reply(`Unlinked Telegram from ${name}. You can re-link anytime with /login <email> <password>.`);
+    return ctx.reply(`Unlinked Telegram from ${name}. You can log in again anytime using the menu below.`, {
+      replyMarkup: buildMainMenuKeyboard(null),
+    });
   };
   onCommand('logout', handleUnlink);
   onCommand('unlink', handleUnlink);
 
   // /tasks -> Lists open tasks assigned to the linked member (strictly within their project scope)
   onCommand('tasks', async ctx => {
+    setChatSession(ctx.chatId, null);
     if (!ctx.member) {
-      return ctx.reply('Please log in first with /login <email> <password> to view your tasks.');
+      return ctx.reply('Please log in first using "🔑 Log in" on the menu below to view your tasks.', {
+        replyMarkup: buildMainMenuKeyboard(null),
+      });
     }
     const state = loadState(ctx.member.id);
     const myTasks = (state.data.tasks || []).filter(t => t.assignee === ctx.member.id && t.status !== 'done' && t.status !== 'canceled' && !t.archived);
     if (!myTasks.length) {
-      return ctx.reply('You have no open assigned tasks.');
+      return ctx.reply('You have no open assigned tasks.', {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
     }
     const lines = myTasks.slice(0, 10).map(t => `• [${t.key}] ${t.title} (${t.status})`);
-    return ctx.reply(`Your open tasks (${myTasks.length}):\n${lines.join('\n')}`);
+    return ctx.reply(`Your open tasks (${myTasks.length}):\n${lines.join('\n')}`, {
+      replyMarkup: buildMainMenuKeyboard(ctx.member),
+    });
   });
 
   // /help
   onCommand('help', async ctx => {
+    setChatSession(ctx.chatId, null);
     return ctx.reply(
-      'Available commands:\n' +
-        '/login <email> <password> — Log in & save your Telegram ID/username\n' +
-        '/link <CODE> — Link using a one-time code from Settings\n' +
-        '/whoami — Show your linked member account\n' +
-        '/tasks — List your open assigned tasks\n' +
-        '/logout — Unlink your Telegram account',
+      'MiniPlanner Telegram Bot Menu:\n' +
+        '• 🔑 Log in (/login) — Interactive login with your email & password\n' +
+        '• 🔗 Enter Link Code (/link) — Link using a one-time code from Settings\n' +
+        '• 📋 My Tasks (/tasks) — List your open assigned tasks\n' +
+        '• 👤 My Account (/whoami) — Show your linked member profile\n' +
+        '• 🚪 Log out (/logout) — Unlink your Telegram account',
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
     );
   });
 }
 
 registerBuiltInHandlers();
+
+/* ---------- Interactive Step Processor (Multi-step login & link code) ---------- */
+async function processInteractiveStep(ctx) {
+  const session = getChatSession(ctx.chatId);
+  if (!session) return { handled: false };
+
+  const input = ctx.text.trim();
+  const telegramId = String(ctx.from?.id || ctx.chatId || '');
+  const telegramUsername = String(ctx.from?.username || '');
+
+  if (session.step === 'await_email') {
+    if (!input.includes('@')) {
+      const r = await ctx.reply('That does not look like a valid email address. Please enter your workspace email (or tap ❌ Cancel):', {
+        replyMarkup: buildCancelKeyboard(),
+      });
+      return { handled: true, out: r };
+    }
+    setChatSession(ctx.chatId, { step: 'await_password', email: input });
+    const r = await ctx.reply(`Email: ${input}\nNow please enter your password (or tap ❌ Cancel):`, {
+      replyMarkup: buildCancelKeyboard(),
+    });
+    return { handled: true, out: r };
+  }
+
+  if (session.step === 'await_password') {
+    const email = session.email;
+    setChatSession(ctx.chatId, null);
+
+    // Best-effort: delete the user's password message from the chat so it doesn't stay visible
+    if (ctx.message?.message_id) {
+      callTelegramApi(
+        'deleteMessage',
+        { chat_id: String(ctx.chatId), message_id: ctx.message.message_id },
+        { token: ctx._options?.token, fetchImpl: ctx._options?.fetchImpl },
+      ).catch(() => {});
+    }
+
+    const res = linkMemberTelegramByCredentials({
+      email,
+      password: input,
+      telegramId,
+      telegramUsername,
+    });
+
+    if (!res.ok) {
+      const r = await ctx.reply(`Login failed: ${res.error}\nTap "🔑 Log in" to try again.`, {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
+      return { handled: true, out: r, redactLog: true };
+    }
+
+    ctx.member = res.member;
+    const handleStr = telegramUsername ? ` (@${telegramUsername})` : '';
+    const r = await ctx.reply(
+      `Logged in and linked to ${res.member.name} (${res.member.email}).\nYour Telegram ID ${telegramId}${handleStr} has been saved to your profile.`,
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
+    );
+    return { handled: true, out: r, redactLog: true };
+  }
+
+  if (session.step === 'await_link_code') {
+    setChatSession(ctx.chatId, null);
+    const memberId = consumeTelegramLinkCode(input);
+    if (!memberId) {
+      const r = await ctx.reply('Invalid or expired link code. Please generate a new code in Settings or tap "🔑 Log in".', {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
+      return { handled: true, out: r };
+    }
+    const res = linkMemberTelegramById(memberId, { telegramId, telegramUsername });
+    if (!res.ok) {
+      const r = await ctx.reply(`Link failed: ${res.error}`, {
+        replyMarkup: buildMainMenuKeyboard(ctx.member),
+      });
+      return { handled: true, out: r };
+    }
+    ctx.member = res.member;
+    const handleStr = telegramUsername ? ` (@${telegramUsername})` : '';
+    const r = await ctx.reply(
+      `Account linked to ${res.member.name} (${res.member.email}).\nYour Telegram ID ${telegramId}${handleStr} has been saved to your profile.`,
+      { replyMarkup: buildMainMenuKeyboard(ctx.member) },
+    );
+    return { handled: true, out: r };
+  }
+
+  return { handled: false };
+}
 
 /* ---------- 2. Receive Message (Update Processor + Polling + Webhook) ---------- */
 const _recentInboundMessages = [];
@@ -437,6 +689,13 @@ export async function handleTelegramUpdate(update, options = {}) {
     if (updateId > cfg.lastUpdateId) {
       setTelegramLastUpdateId(updateId);
     }
+  }
+
+  // Acknowledge inline keyboard callback_query if present
+  if (update.callback_query?.id) {
+    callTelegramApi('answerCallbackQuery', { callback_query_id: update.callback_query.id }, { token: options.token, fetchImpl: options.fetchImpl }).catch(
+      () => {},
+    );
   }
 
   const message = update.message || update.edited_message || update.callback_query?.message || null;
@@ -474,11 +733,13 @@ export async function handleTelegramUpdate(update, options = {}) {
     member,
     command: null,
     argsText: '',
+    _options: options,
     reply: async (replyText, replyOpts = {}) => {
       const r = await sendMessage(
         {
           chatId,
           text: replyText,
+          replyMarkup: replyOpts.replyMarkup !== undefined ? replyOpts.replyMarkup : buildMainMenuKeyboard(ctx.member),
           ...replyOpts,
         },
         undefined,
@@ -490,12 +751,15 @@ export async function handleTelegramUpdate(update, options = {}) {
   };
 
   const results = [];
+  let redactLog = false;
 
-  // Check if message starts with a /command (e.g. "/login alice@company.com secret" or "/start@botname arg")
+  // 1. Check if message matches a slash command (`/login ...`) OR an on-screen menu button (`🔑 Log in`, `📋 My Tasks`, etc.)
   const cmdMatch = text.match(/^\/([a-zA-Z0-9_]+)(?:@[a-zA-Z0-9_]+)?(?:\s+([\s\S]*))?$/);
-  if (cmdMatch) {
-    const cmdName = cmdMatch[1].toLowerCase();
-    const argsText = (cmdMatch[2] || '').trim();
+  const mappedButtonCmd = !cmdMatch ? BUTTON_TO_COMMAND.get(text.toLowerCase()) || null : null;
+
+  if (cmdMatch || mappedButtonCmd) {
+    const cmdName = cmdMatch ? cmdMatch[1].toLowerCase() : mappedButtonCmd;
+    const argsText = cmdMatch ? (cmdMatch[2] || '').trim() : '';
     ctx.command = cmdName;
     ctx.argsText = argsText;
 
@@ -504,17 +768,35 @@ export async function handleTelegramUpdate(update, options = {}) {
       const out = await entry.handler(ctx);
       results.push(out);
     }
+  } else {
+    // 2. If not a command or menu button, check if chat is in an interactive multi-step login/link flow
+    const stepRes = await processInteractiveStep(ctx);
+    if (stepRes.handled) {
+      results.push(stepRes.out);
+      if (stepRes.redactLog) redactLog = true;
+    }
   }
 
-  // Execute declared message handlers matching ctx
+  // 3. Execute declared custom message handlers matching ctx
   for (const entry of _messageHandlers) {
     if (entry.filter && !entry.filter(ctx)) continue;
     const out = await entry.handler(ctx);
     results.push(out);
   }
 
-  // Record in recent inbound log (redact password in /login logs!)
-  const safeLogText = ctx.command === 'login' ? '/login [REDACTED]' : text.slice(0, 200);
+  // 4. Default interactive menu response when an unrecognized message wasn't handled by any command, step, or custom handler
+  if (results.length === 0 && text) {
+    const welcomeText = ctx.member
+      ? `Hi ${ctx.member.name}! Choose an option from the menu keys below:`
+      : 'Welcome to MiniPlanner Bot! You are not logged in yet.\nTap "🔑 Log in" on the menu below to sign in with your workspace email and password:';
+    const fallbackOut = await ctx.reply(welcomeText, {
+      replyMarkup: buildMainMenuKeyboard(ctx.member),
+    });
+    results.push(fallbackOut);
+  }
+
+  // Record in recent inbound log (redact password in /login or interactive password step!)
+  const safeLogText = ctx.command === 'login' && ctx.argsText ? '/login [REDACTED]' : redactLog ? '[PASSWORD REDACTED]' : text.slice(0, 200);
   const logEntry = {
     updateId,
     messageId: message.message_id || null,
@@ -545,6 +827,29 @@ export async function handleTelegramUpdate(update, options = {}) {
 /* ---------- Long-Polling Support (getUpdates) ---------- */
 let _pollTimer = null;
 let _isPolling = false;
+let _webhookClearedForToken = null;
+
+export async function configureTelegramBotCommands(options = {}) {
+  const cfg = getTelegramConfigInternal();
+  const token = options.token || cfg.botToken;
+  if (!token) return { ok: false, error: 'No token' };
+  await callTelegramApi(
+    'setMyCommands',
+    {
+      commands: [
+        { command: 'start', description: 'Open main menu' },
+        { command: 'login', description: 'Log in with your workspace account' },
+        { command: 'link', description: 'Link account with one-time code' },
+        { command: 'tasks', description: 'View your open assigned tasks' },
+        { command: 'whoami', description: 'View your linked account info' },
+        { command: 'help', description: 'Show help & menu' },
+        { command: 'logout', description: 'Unlink your Telegram account' },
+      ],
+    },
+    { token, fetchImpl: options.fetchImpl },
+  ).catch(() => {});
+  return { ok: true };
+}
 
 export async function pollTelegramUpdates(options = {}) {
   if (_isPolling) {
@@ -558,6 +863,12 @@ export async function pollTelegramUpdates(options = {}) {
 
   _isPolling = true;
   try {
+    // Ensure any active webhook is removed when running in polling mode so getUpdates does not fail with 409 Conflict
+    if (cfg.mode === 'polling' && _webhookClearedForToken !== token) {
+      await callTelegramApi('deleteWebhook', { drop_pending_updates: false }, { token, fetchImpl: options.fetchImpl }).catch(() => {});
+      _webhookClearedForToken = token;
+    }
+
     const offset = cfg.lastUpdateId > 0 ? cfg.lastUpdateId + 1 : 0;
     const resp = await callTelegramApi(
       'getUpdates',
@@ -591,12 +902,24 @@ export async function pollTelegramUpdates(options = {}) {
   }
 }
 
-export function startTelegramPolling(intervalMs = 4000) {
+export function startTelegramPolling(intervalMs = 2500) {
   stopTelegramPolling();
   const cfg = getTelegramConfigInternal();
-  if (!cfg.enabled || !cfg.botToken || cfg.mode !== 'polling') {
+  if (!cfg.botToken || cfg.mode !== 'polling') {
     return false;
   }
+  // If a bot token is already configured in polling mode, ensure tg_enabled is turned on so polling works immediately
+  if (!cfg.enabled) {
+    try {
+      const db = getDb();
+      db.prepare('UPDATE workspace_settings SET tg_enabled = 1 WHERE id = 1 AND tg_bot_token != ?').run('');
+    } catch {
+      /* ignore */
+    }
+  }
+  configureTelegramBotCommands().catch(() => {});
+  pollTelegramUpdates().catch(() => {});
+
   _pollTimer = setInterval(() => {
     const current = getTelegramConfigInternal();
     if (!current.enabled || !current.botToken || current.mode !== 'polling') {

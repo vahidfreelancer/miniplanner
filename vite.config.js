@@ -4,6 +4,7 @@ import path from 'node:path';
 import { icons as lucide } from 'lucide';
 import { apiMiddleware } from './server/api.js';
 import { getDb } from './server/db.js';
+import { startTelegramPolling } from './server/telegram.js';
 
 /* `virtual:icons` exports only the Lucide icons the source actually names, as inline SVG markup,
    so the bundle carries ~170 icons instead of the full set. Any quoted kebab-case token in src/
@@ -54,10 +55,12 @@ function sqliteBackendPlugin() {
     name: 'sqlite-backend',
     configureServer(server) {
       getDb();
+      startTelegramPolling();
       server.middlewares.use(apiMiddleware());
     },
     configurePreviewServer(server) {
       getDb();
+      startTelegramPolling();
       server.middlewares.use(apiMiddleware());
     },
   };
